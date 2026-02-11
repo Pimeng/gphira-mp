@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -24,9 +25,9 @@ type LogRateLimiter struct {
 	windowStart time.Time
 
 	// 限流状态
-	throttled       bool
-	throttleUntil   time.Time
-	throttleCount   int // 限流期间被抑制的日志数量
+	throttled     bool
+	throttleUntil time.Time
+	throttleCount int // 限流期间被抑制的日志数量
 
 	// 保护的关键日志前缀（这些日志不会被限流）
 	protectedPrefixes []string
@@ -157,90 +158,7 @@ func RateLimitedPrint(message string) {
 
 // sprintf 格式化字符串辅助函数
 func sprintf(format string, v ...interface{}) string {
-	if len(v) == 0 {
-		return format
-	}
-	// 简单的格式化实现
-	result := format
-	for _, arg := range v {
-		// 将 %v 替换为实际值
-		if idx := findFormatVerb(result); idx >= 0 {
-			result = result[:idx] + formatArg(arg) + result[idx+2:]
-		}
-	}
-	return result
-}
-
-// findFormatVerb 查找格式化动词的位置
-func findFormatVerb(s string) int {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == '%' && (s[i+1] == 'v' || s[i+1] == 's' || s[i+1] == 'd' || s[i+1] == 'f') {
-			return i
-		}
-	}
-	return -1
-}
-
-// formatArg 格式化参数
-func formatArg(arg interface{}) string {
-	switch v := arg.(type) {
-	case string:
-		return v
-	case int:
-		return itoa(v)
-	case int32:
-		return itoa(int(v))
-	case int64:
-		return itoa(int(v))
-	case float32:
-		return ftoa(float64(v))
-	case float64:
-		return ftoa(v)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	default:
-		return "?"
-	}
-}
-
-// itoa 整数转字符串
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if negative {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
-
-// ftoa 浮点数转字符串（简化版）
-func ftoa(f float64) string {
-	// 简单实现，只保留2位小数
-	intPart := int(f)
-	fracPart := int((f - float64(intPart)) * 100)
-	if fracPart < 0 {
-		fracPart = -fracPart
-	}
-	if intPart < 0 {
-		return "-" + itoa(-intPart) + "." + itoa(fracPart)
-	}
-	return itoa(intPart) + "." + itoa(fracPart)
+	return fmt.Sprintf(format, v...)
 }
 
 // GetLogLimiterStatus 获取日志限制器状态（供外部调用）

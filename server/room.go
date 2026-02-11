@@ -320,7 +320,8 @@ func (r *Room) CheckAllReady() {
 	state := r.GetState()
 	switch state {
 	case InternalStateWaitForReady:
-		users := r.GetAllUsers()
+		// 只检查普通玩家，不包括观察者
+		users := r.GetUsers()
 		allReady := true
 		for _, u := range users {
 			if _, ok := r.started.Load(u.ID); !ok {
@@ -329,6 +330,10 @@ func (r *Room) CheckAllReady() {
 			}
 		}
 		if allReady {
+			// 清空之前的游戏状态
+			r.results = sync.Map{}
+			r.aborted = sync.Map{}
+			
 			r.SendMessage(common.Message{Type: common.MsgStartPlaying})
 			r.ResetGameTime()
 			r.SetState(InternalStatePlaying)
@@ -364,6 +369,12 @@ func (r *Room) CheckAllReady() {
 			}
 
 			r.SendMessage(common.Message{Type: common.MsgGameEnd})
+			
+			// 清空游戏状态
+			r.started = sync.Map{}
+			r.results = sync.Map{}
+			r.aborted = sync.Map{}
+			
 			r.SetState(InternalStateSelectChart)
 
 			// 循环模式：切换房主

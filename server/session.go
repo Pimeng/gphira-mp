@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"phira-mp/common"
@@ -90,7 +91,7 @@ func (s *Session) recvLoop() {
 
 		// 记录接收到的命令类型（只在 DEBUG 模式下输出）
 		if s.server.IsDebugEnabled() {
-			RateLimitedLog("会话 %s 收到命令: 类型=%d", s.ID, cmd.Type)
+			log.Printf("[DEBUG] 会话 %s 收到命令: 类型=%d", s.ID, cmd.Type)
 		}
 
 		if err := s.handleCommand(cmd); err != nil {
@@ -525,6 +526,17 @@ func (s *Session) handleLeaveRoom() error {
 		})
 	}
 
+	// 如果在游戏中离开，标记为放弃
+	if room.GetState() == InternalStatePlaying {
+		log.Printf("用户 %d(%s) 在游戏中离开房间，标记为放弃", s.User.ID, s.User.Name)
+		room.aborted.Store(s.User.ID, true)
+		room.SendMessage(common.Message{
+			Type: common.MsgAbort,
+			User: s.User.ID,
+		})
+		room.CheckAllReady()
+	}
+
 	if room.OnUserLeave(s.User) {
 		s.server.RemoveRoom(room.ID, "房间为空")
 	}
@@ -751,6 +763,11 @@ func (s *Session) handleCancelReady() error {
 
 	// 房主取消则取消游戏
 	if room.GetHost().ID == s.User.ID {
+		// 清空游戏状态
+		room.started = sync.Map{}
+		room.results = sync.Map{}
+		room.aborted = sync.Map{}
+		
 		room.SendMessage(common.Message{
 			Type: common.MsgCancelGame,
 			User: s.User.ID,

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -134,6 +135,14 @@ func (u *User) Send(cmd common.ServerCommand) {
 
 // Dangle 处理用户连接断开
 func (u *User) Dangle() {
+	// 检查是否在游戏中，如果是则立即处理
+	room := u.GetRoom()
+	if room != nil && room.GetState() == InternalStatePlaying {
+		log.Printf("用户 %d(%s) 在游戏中断开连接，立即处理", u.ID, u.Name)
+		u.HandleDangleTimeout()
+		return
+	}
+
 	u.mu.Lock()
 	if u.dangleMark != nil {
 		u.dangleMark.Stop()
@@ -149,7 +158,9 @@ func (u *User) HandleDangleTimeout() {
 	room := u.GetRoom()
 	if room != nil {
 		if room.GetState() == InternalStatePlaying {
-			// 游戏中断开，直接离开
+			// 游戏中断开，标记为放弃并离开
+			log.Printf("用户 %d(%s) 在游戏中断开，标记为放弃", u.ID, u.Name)
+			room.aborted.Store(u.ID, true)
 			u.server.RemoveUser(u.ID)
 			if room.OnUserLeave(u) {
 				u.server.RemoveRoom(room.ID, "房间为空")
