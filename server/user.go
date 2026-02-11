@@ -25,8 +25,8 @@ type User struct {
 	session atomic.Value // *Session
 	room    atomic.Value // *Room
 
-	monitor   atomic.Bool
-	gameTime  atomic.Uint32
+	monitor  atomic.Bool
+	gameTime atomic.Uint32
 
 	mu           sync.RWMutex
 	disconnected bool
@@ -54,6 +54,10 @@ func (u *User) ToInfo() common.UserInfo {
 
 // CanMonitor 是否能观察
 func (u *User) CanMonitor() bool {
+	// 直播模式未启用时，不允许观察
+	if !u.server.config.LiveMode {
+		return false
+	}
 	for _, id := range u.server.config.Monitors {
 		if id == u.ID {
 			return true
@@ -148,7 +152,7 @@ func (u *User) HandleDangleTimeout() {
 			// 游戏中断开，直接离开
 			u.server.RemoveUser(u.ID)
 			if room.OnUserLeave(u) {
-				u.server.RemoveRoom(room.ID)
+				u.server.RemoveRoom(room.ID, "房间为空")
 			}
 			return
 		}
@@ -165,7 +169,7 @@ func (u *User) HandleDangleTimeout() {
 	if room != nil {
 		u.server.RemoveUser(u.ID)
 		if room.OnUserLeave(u) {
-			u.server.RemoveRoom(room.ID)
+			u.server.RemoveRoom(room.ID, "房间为空")
 		}
 	}
 }

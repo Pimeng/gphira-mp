@@ -13,13 +13,13 @@ import (
 
 func main() {
 	// 解析命令行参数
-	port := flag.Int("port", 12346, "Server port")
+	port := flag.Int("port", 12346, "服务器端口")
 	flag.Parse()
 
 	// 加载配置
 	config, err := server.LoadConfig("server_config.yml")
 	if err != nil {
-		log.Printf("Failed to load config: %v, using default", err)
+		log.Printf("加载配置失败: %v, 使用默认配置", err)
 		config = server.DefaultConfig()
 	}
 
@@ -34,16 +34,16 @@ func main() {
 	go func() {
 		address := fmt.Sprintf(":%d", *port)
 		if err := srv.Start(address); err != nil {
-			log.Fatalf("Server error: %v", err)
+			log.Fatalf("服务器错误: %v", err)
 		}
 	}()
 
-	log.Printf("Phira-MP Server started on port %d", *port)
-	log.Println("Press Ctrl+C to stop")
+	log.Printf("Phira-MP 服务器已启动，端口: %d", *port)
+	log.Println("按 Ctrl+C 停止服务器")
 
 	// 等待信号
 	<-sigChan
-	log.Println("Shutting down...")
+	log.Println("正在关闭服务器...")
 	srv.Stop()
-	log.Println("Server stopped")
+	log.Println("服务器已停止")
 }

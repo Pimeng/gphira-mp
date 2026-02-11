@@ -251,23 +251,12 @@ func (s *ServerStream) Recv() (ClientCommand, error) {
 	if err != nil {
 		return ClientCommand{}, err
 	}
-	// 记录原始数据用于调试
-	if len(data) > 0 {
-		fmt.Printf("[DEBUG] Received raw data (len=%d): %v\n", len(data), data[:min(len(data), 20)])
-	}
 	r := NewBinaryReader(data)
 	var cmd ClientCommand
 	if err := cmd.ReadBinary(r); err != nil {
-		return ClientCommand{}, fmt.Errorf("failed to decode command: %w, raw data: %v", err, data[:min(len(data), 20)])
+		return ClientCommand{}, fmt.Errorf("解码命令失败: %w", err)
 	}
 	return cmd, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // ClientStream 客户端Stream包装

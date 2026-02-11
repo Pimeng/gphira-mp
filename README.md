@@ -2,27 +2,6 @@
 
 这是 Phira 多人游戏服务器的 Go 语言实现版本，与 Rust 原版协议兼容。
 
-## 项目结构
-
-```
-go-src/
-├── common/          # 共享协议定义
-│   ├── binary.go   # 二进制编码/解码
-│   ├── command.go  # 命令定义（ClientCommand/ServerCommand）
-│   └── stream.go   # 网络流处理
-├── server/          # 服务器实现
-│   ├── server.go   # 服务器主逻辑
-│   ├── session.go  # 会话管理
-│   ├── room.go     # 房间管理
-│   ├── user.go     # 用户管理
-│   └── config.go   # 配置定义
-├── client/          # 客户端实现
-│   └── client.go   # 客户端主逻辑
-└── cmd/
-    └── server/
-        └── main.go # 服务器入口
-```
-
 ## 功能特性
 
 - **协议兼容**: 与 Rust 原版 Phira-MP 完全协议兼容
@@ -63,8 +42,15 @@ go run cmd/server/main.go
 ### server_config.yml
 
 ```yaml
+# 直播模式开关
+live_mode: false
+
+# 允许观察的用户ID列表（仅在直播模式启用时生效）
 monitors:
-  - 2  # 允许观察的用户ID列表
+  - 2
+
+# 日志级别
+log_level: info
 ```
 
 ## 与 Rust 原版的差异

@@ -19,6 +19,7 @@ type Session struct {
 	server        *Server
 	stopChan      chan struct{}
 	stopped       bool
+	disconnecting bool // 是否正在断开连接，避免重复处理
 	lastPing      time.Time
 	authenticated bool
 }
@@ -65,18 +66,35 @@ func (s *Session) recvLoop() {
 
 		cmd, err := s.Stream.Recv()
 		if err != nil {
-			log.Printf("Session %s recv error: %v", s.ID, err)
+			log.Printf("会话 %s 接收错误: %v", s.ID, err)
 			s.handleDisconnect()
 			return
 		}
 
 		s.lastPing = time.Now()
 
-		// 记录接收到的命令类型
-		log.Printf("Session %s received command: type=%d", s.ID, cmd.Type)
+		// 选择谱面命令输出详细日志（常规输出）
+		if cmd.Type == common.ClientCmdSelectChart && s.User != nil {
+			room := s.User.GetRoom()
+			if room != nil {
+				chart, _ := FetchChart(cmd.ChartID)
+				if chart != nil {
+					log.Printf("玩家 `%s(%d)` 在房间 `%s` 选择了谱面 `%s(%d)`", s.User.Name, s.User.ID, room.ID, chart.Name, chart.ID)
+				} else {
+					log.Printf("玩家 `%s(%d)` 在房间 `%s` 选择了谱面 `ID(%d)`", s.User.Name, s.User.ID, room.ID, cmd.ChartID)
+				}
+			} else {
+				log.Printf("玩家 `%s(%d)` 选择了谱面 `ID(%d)`", s.User.Name, s.User.ID, cmd.ChartID)
+			}
+		}
+
+		// 记录接收到的命令类型（只在 DEBUG 模式下输出）
+		if s.server.IsDebugEnabled() {
+			log.Printf("会话 %s 收到命令: 类型=%d", s.ID, cmd.Type)
+		}
 
 		if err := s.handleCommand(cmd); err != nil {
-			log.Printf("Session %s handle command error: %v", s.ID, err)
+			log.Printf("会话 %s 处理命令错误: %v", s.ID, err)
 		}
 	}
 }
@@ -92,7 +110,7 @@ func (s *Session) heartbeatCheck() {
 			return
 		case <-ticker.C:
 			if time.Since(s.lastPing) > common.HeartbeatDisconnectTimeout {
-				log.Printf("Session %s heartbeat timeout", s.ID)
+				log.Printf("会话 %s 心跳超时", s.ID)
 				s.handleDisconnect()
 				return
 			}
@@ -102,6 +120,12 @@ func (s *Session) heartbeatCheck() {
 
 // handleDisconnect 处理断开连接
 func (s *Session) handleDisconnect() {
+	// 检查是否已经在处理断开，避免重复执行
+	if s.disconnecting {
+		return
+	}
+	s.disconnecting = true
+
 	s.server.RemoveSession(s.ID)
 	if s.User != nil {
 		s.User.Dangle()
@@ -119,7 +143,7 @@ func (s *Session) handleCommand(cmd common.ClientCommand) error {
 	// 未认证时只允许Authenticate
 	if !s.authenticated {
 		if cmd.Type != common.ClientCmdAuthenticate {
-			return fmt.Errorf("not authenticated")
+			return fmt.Errorf("未认证")
 		}
 		return s.handleAuthenticate(cmd.Token)
 	}
@@ -155,17 +179,17 @@ func (s *Session) handleCommand(cmd common.ClientCommand) error {
 	case common.ClientCmdAbort:
 		return s.handleAbort()
 	default:
-		log.Printf("Session %s unknown command type: %d (max valid: %d), disconnecting", s.ID, cmd.Type, common.ClientCmdAbort)
+		log.Printf("会话 %s 未知命令类型: %d (最大有效值: %d), 断开连接", s.ID, cmd.Type, common.ClientCmdAbort)
 		// 发送错误响应
 		s.Send(common.ServerCommand{
 			Type: common.ServerCmdMessage,
 			Message: &common.Message{
 				Type:    common.MsgChat,
 				User:    -1,
-				Content: "Unknown command type",
+				Content: "未知命令类型",
 			},
 		})
-		return fmt.Errorf("unknown command type: %d", cmd.Type)
+		return fmt.Errorf("未知命令类型: %d", cmd.Type)
 	}
 }
 
@@ -176,7 +200,7 @@ func (s *Session) handleAuthenticate(token string) error {
 		s.Send(common.ServerCommand{
 			Type: common.ServerCmdAuthenticate,
 			AuthenticateResult: &common.Result[common.AuthResult]{
-				Err: strPtr("authentication failed"),
+				Err: strPtr("认证失败"),
 			},
 		})
 		return err
@@ -220,7 +244,7 @@ func (s *Session) handleChat(message string) error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:       common.ServerCmdChat,
-			ChatResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			ChatResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
@@ -278,14 +302,14 @@ func (s *Session) handleCreateRoom(roomId common.RoomId) error {
 	if s.User.GetRoom() != nil {
 		return s.Send(common.ServerCommand{
 			Type:             common.ServerCmdCreateRoom,
-			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("already in room")},
+			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("已在房间中")},
 		})
 	}
 
 	if s.server.GetRoom(roomId) != nil {
 		return s.Send(common.ServerCommand{
 			Type:             common.ServerCmdCreateRoom,
-			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("room id occupied")},
+			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("房间ID已被占用")},
 		})
 	}
 
@@ -309,7 +333,7 @@ func (s *Session) handleJoinRoom(roomId common.RoomId, monitor bool) error {
 	if s.User.GetRoom() != nil {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
-			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("already in room")},
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("已在房间中")},
 		})
 	}
 
@@ -317,35 +341,35 @@ func (s *Session) handleJoinRoom(roomId common.RoomId, monitor bool) error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
-			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("room not found")},
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("房间不存在")},
 		})
 	}
 
 	if room.IsLocked() {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
-			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("room is locked")},
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("房间已锁定")},
 		})
 	}
 
 	if room.GetState() != InternalStateSelectChart {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
-			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("game ongoing")},
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("游戏进行中")},
 		})
 	}
 
 	if monitor && !s.User.CanMonitor() {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
-			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("can't monitor")},
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("无法观察")},
 		})
 	}
 
 	if !room.AddUser(s.User, monitor) {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
-			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("room is full")},
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("房间已满")},
 		})
 	}
 
@@ -402,12 +426,12 @@ func (s *Session) handleLeaveRoom() error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:            common.ServerCmdLeaveRoom,
-			LeaveRoomResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			LeaveRoomResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.OnUserLeave(s.User) {
-		s.server.RemoveRoom(room.ID)
+		s.server.RemoveRoom(room.ID, "房间为空")
 	}
 
 	return s.Send(common.ServerCommand{
@@ -422,14 +446,14 @@ func (s *Session) handleLockRoom(lock bool) error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdLockRoom,
-			LockRoomResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			LockRoomResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if err := room.CheckHost(s.User); err != nil {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdLockRoom,
-			LockRoomResult: &common.Result[struct{}]{Err: strPtr("only host can lock")},
+			LockRoomResult: &common.Result[struct{}]{Err: strPtr("只有房主可以锁定")},
 		})
 	}
 
@@ -451,14 +475,14 @@ func (s *Session) handleCycleRoom(cycle bool) error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:            common.ServerCmdCycleRoom,
-			CycleRoomResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			CycleRoomResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if err := room.CheckHost(s.User); err != nil {
 		return s.Send(common.ServerCommand{
 			Type:            common.ServerCmdCycleRoom,
-			CycleRoomResult: &common.Result[struct{}]{Err: strPtr("only host can cycle")},
+			CycleRoomResult: &common.Result[struct{}]{Err: strPtr("只有房主可以设置循环")},
 		})
 	}
 
@@ -480,21 +504,21 @@ func (s *Session) handleSelectChart(chartID int32) error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdSelectChart,
-			SelectChartResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			SelectChartResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.GetState() != InternalStateSelectChart {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdSelectChart,
-			SelectChartResult: &common.Result[struct{}]{Err: strPtr("invalid state")},
+			SelectChartResult: &common.Result[struct{}]{Err: strPtr("无效状态")},
 		})
 	}
 
 	if err := room.CheckHost(s.User); err != nil {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdSelectChart,
-			SelectChartResult: &common.Result[struct{}]{Err: strPtr("only host can select")},
+			SelectChartResult: &common.Result[struct{}]{Err: strPtr("只有房主可以选择谱面")},
 		})
 	}
 
@@ -502,7 +526,7 @@ func (s *Session) handleSelectChart(chartID int32) error {
 	if err != nil {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdSelectChart,
-			SelectChartResult: &common.Result[struct{}]{Err: strPtr("chart not found")},
+			SelectChartResult: &common.Result[struct{}]{Err: strPtr("谱面不存在")},
 		})
 	}
 
@@ -527,28 +551,28 @@ func (s *Session) handleRequestStart() error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.GetState() != InternalStateSelectChart {
 		return s.Send(common.ServerCommand{
 			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("invalid state")},
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("无效状态")},
 		})
 	}
 
 	if err := room.CheckHost(s.User); err != nil {
 		return s.Send(common.ServerCommand{
 			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("only host can start")},
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("只有房主可以开始")},
 		})
 	}
 
 	if room.GetChart() == nil {
 		return s.Send(common.ServerCommand{
 			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("no chart selected")},
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("未选择谱面")},
 		})
 	}
 
@@ -574,21 +598,21 @@ func (s *Session) handleReady() error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdReady,
-			ReadyResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			ReadyResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.GetState() != InternalStateWaitForReady {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdReady,
-			ReadyResult: &common.Result[struct{}]{Err: strPtr("invalid state")},
+			ReadyResult: &common.Result[struct{}]{Err: strPtr("无效状态")},
 		})
 	}
 
 	if _, loaded := room.started.LoadOrStore(s.User.ID, true); loaded {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdReady,
-			ReadyResult: &common.Result[struct{}]{Err: strPtr("already ready")},
+			ReadyResult: &common.Result[struct{}]{Err: strPtr("已准备")},
 		})
 	}
 
@@ -610,21 +634,21 @@ func (s *Session) handleCancelReady() error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdCancelReady,
-			CancelReadyResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			CancelReadyResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.GetState() != InternalStateWaitForReady {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdCancelReady,
-			CancelReadyResult: &common.Result[struct{}]{Err: strPtr("invalid state")},
+			CancelReadyResult: &common.Result[struct{}]{Err: strPtr("无效状态")},
 		})
 	}
 
 	if _, ok := room.started.Load(s.User.ID); !ok {
 		return s.Send(common.ServerCommand{
 			Type:              common.ServerCmdCancelReady,
-			CancelReadyResult: &common.Result[struct{}]{Err: strPtr("not ready")},
+			CancelReadyResult: &common.Result[struct{}]{Err: strPtr("未准备")},
 		})
 	}
 
@@ -657,14 +681,14 @@ func (s *Session) handlePlayed(recordID int32) error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:         common.ServerCmdPlayed,
-			PlayedResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			PlayedResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.GetState() != InternalStatePlaying {
 		return s.Send(common.ServerCommand{
 			Type:         common.ServerCmdPlayed,
-			PlayedResult: &common.Result[struct{}]{Err: strPtr("not playing")},
+			PlayedResult: &common.Result[struct{}]{Err: strPtr("未在游戏中")},
 		})
 	}
 
@@ -672,14 +696,14 @@ func (s *Session) handlePlayed(recordID int32) error {
 	if err != nil {
 		return s.Send(common.ServerCommand{
 			Type:         common.ServerCmdPlayed,
-			PlayedResult: &common.Result[struct{}]{Err: strPtr("record not found")},
+			PlayedResult: &common.Result[struct{}]{Err: strPtr("记录不存在")},
 		})
 	}
 
 	if record.Player != s.User.ID {
 		return s.Send(common.ServerCommand{
 			Type:         common.ServerCmdPlayed,
-			PlayedResult: &common.Result[struct{}]{Err: strPtr("invalid record")},
+			PlayedResult: &common.Result[struct{}]{Err: strPtr("无效记录")},
 		})
 	}
 
@@ -687,7 +711,7 @@ func (s *Session) handlePlayed(recordID int32) error {
 	if _, aborted := room.aborted.Load(s.User.ID); aborted {
 		return s.Send(common.ServerCommand{
 			Type:         common.ServerCmdPlayed,
-			PlayedResult: &common.Result[struct{}]{Err: strPtr("already aborted")},
+			PlayedResult: &common.Result[struct{}]{Err: strPtr("已放弃")},
 		})
 	}
 
@@ -695,7 +719,7 @@ func (s *Session) handlePlayed(recordID int32) error {
 	if _, hasResult := room.results.Load(s.User.ID); hasResult {
 		return s.Send(common.ServerCommand{
 			Type:         common.ServerCmdPlayed,
-			PlayedResult: &common.Result[struct{}]{Err: strPtr("already uploaded")},
+			PlayedResult: &common.Result[struct{}]{Err: strPtr("已上传")},
 		})
 	}
 
@@ -721,14 +745,14 @@ func (s *Session) handleAbort() error {
 	if room == nil {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdAbort,
-			AbortResult: &common.Result[struct{}]{Err: strPtr("not in room")},
+			AbortResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
 		})
 	}
 
 	if room.GetState() != InternalStatePlaying {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdAbort,
-			AbortResult: &common.Result[struct{}]{Err: strPtr("not playing")},
+			AbortResult: &common.Result[struct{}]{Err: strPtr("未在游戏中")},
 		})
 	}
 
@@ -736,7 +760,7 @@ func (s *Session) handleAbort() error {
 	if _, hasResult := room.results.Load(s.User.ID); hasResult {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdAbort,
-			AbortResult: &common.Result[struct{}]{Err: strPtr("already uploaded")},
+			AbortResult: &common.Result[struct{}]{Err: strPtr("已上传")},
 		})
 	}
 
@@ -744,7 +768,7 @@ func (s *Session) handleAbort() error {
 	if _, aborted := room.aborted.Load(s.User.ID); aborted {
 		return s.Send(common.ServerCommand{
 			Type:        common.ServerCmdAbort,
-			AbortResult: &common.Result[struct{}]{Err: strPtr("already aborted")},
+			AbortResult: &common.Result[struct{}]{Err: strPtr("已放弃")},
 		})
 	}
 

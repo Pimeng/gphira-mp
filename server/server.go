@@ -36,17 +36,17 @@ func (s *Server) Start(address string) error {
 	}
 	s.listener = listener
 
-	log.Printf("Server started on %s", address)
+	log.Printf("服务器正在偷听 %s", address)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			// 检查是否是关闭导致的错误
 			if opErr, ok := err.(*net.OpError); ok && !opErr.Temporary() {
-				log.Printf("Server listener closed")
+				log.Printf("服务器监听已关闭")
 				return nil
 			}
-			log.Printf("Accept error: %v", err)
+			log.Printf("接受连接错误: %v", err)
 			continue
 		}
 
@@ -74,7 +74,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// 创建Stream
 	stream, err := common.NewServerStream(conn)
 	if err != nil {
-		log.Printf("Failed to create stream: %v", err)
+		log.Printf("创建流失败: %v", err)
 		conn.Close()
 		return
 	}
@@ -86,7 +86,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	session := NewSession(id, stream, s)
 	s.sessions.Store(id, session)
 
-	log.Printf("New connection from %s (ID: %s, Version: %d)", conn.RemoteAddr(), id, stream.Version())
+	log.Printf("新连接来自 %s (ID: %s, 版本: %d)", conn.RemoteAddr(), id, stream.Version())
 
 	// 启动会话
 	session.Start()
@@ -95,7 +95,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 // RemoveSession 移除会话
 func (s *Server) RemoveSession(id uuid.UUID) {
 	s.sessions.Delete(id)
-	log.Printf("Session removed: %s", id)
+	log.Printf("会话已移除: %s", id)
 }
 
 // GetSession 获取会话
@@ -109,13 +109,13 @@ func (s *Server) GetSession(id uuid.UUID) *Session {
 // AddUser 添加用户
 func (s *Server) AddUser(user *User) {
 	s.users.Store(user.ID, user)
-	log.Printf("User added: %d (%s)", user.ID, user.Name)
+	log.Printf("用户已添加: %d (%s)", user.ID, user.Name)
 }
 
 // RemoveUser 移除用户
 func (s *Server) RemoveUser(id int32) {
 	s.users.Delete(id)
-	log.Printf("User removed: %d", id)
+	log.Printf("用户已移除: %d", id)
 }
 
 // GetUser 获取用户
@@ -129,13 +129,18 @@ func (s *Server) GetUser(id int32) *User {
 // AddRoom 添加房间
 func (s *Server) AddRoom(room *Room) {
 	s.rooms.Store(room.ID, room)
-	log.Printf("Room created: %s", room.ID.Value)
+	host := room.GetHost()
+	log.Printf("玩家 %s(%d) 创建了房间 %s", host.Name, host.ID, room.ID.Value)
 }
 
 // RemoveRoom 移除房间
-func (s *Server) RemoveRoom(id common.RoomId) {
+func (s *Server) RemoveRoom(id common.RoomId, reason string) {
 	s.rooms.Delete(id)
-	log.Printf("Room removed: %s", id.Value)
+	if reason != "" {
+		log.Printf("房间已移除: %s (原因: %s)", id.Value, reason)
+	} else {
+		log.Printf("房间已移除: %s", id.Value)
+	}
 }
 
 // GetRoom 获取房间
@@ -188,6 +193,11 @@ func (s *Server) GetStats() map[string]interface{} {
 // PrintStats 打印统计信息
 func (s *Server) PrintStats() {
 	stats := s.GetStats()
-	log.Printf("Server stats - Sessions: %d, Users: %d, Rooms: %d",
+	log.Printf("服务器统计 - 会话数: %d, 用户数: %d, 房间数: %d",
 		stats["sessions"], stats["users"], stats["rooms"])
+}
+
+// IsDebugEnabled 是否启用 DEBUG 日志
+func (s *Server) IsDebugEnabled() bool {
+	return s.config.IsDebugEnabled()
 }

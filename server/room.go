@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 	"sync"
@@ -49,9 +50,9 @@ type Room struct {
 	locked atomic.Bool
 	cycle  atomic.Bool
 
-	users    sync.RWMutex
-	userList []*User
-	monitors sync.RWMutex
+	users       sync.RWMutex
+	userList    []*User
+	monitors    sync.RWMutex
 	monitorList []*User
 
 	chart atomic.Value // *Chart
@@ -349,6 +350,9 @@ func (r *Room) CheckAllReady() {
 			}
 		}
 		if allDone {
+			// 输出游玩结束信息
+			r.logGameEnd()
+
 			r.SendMessage(common.Message{Type: common.MsgGameEnd})
 			r.SetState(InternalStateSelectChart)
 
@@ -414,4 +418,56 @@ func (r *Room) OnStateChange() {
 		Type:        common.ServerCmdChangeState,
 		ChangeState: &common.RoomState{Type: r.GetState().ToClientState(chartID).Type, ChartID: chartID},
 	})
+}
+
+// logGameEnd 输出游戏结束信息
+func (r *Room) logGameEnd() {
+	host := r.GetHost()
+	chart := r.GetChart()
+	chartName := "未知谱面"
+	if chart != nil {
+		chartName = chart.Name
+	}
+
+	// 收集所有玩家结果
+	var results []string
+	r.results.Range(func(key, value interface{}) bool {
+		userID := key.(int32)
+		record := value.(*Record)
+		// 查找用户名
+		userName := fmt.Sprintf("玩家%d", userID)
+		for _, u := range r.GetAllUsers() {
+			if u.ID == userID {
+				userName = u.Name
+				break
+			}
+		}
+		results = append(results, fmt.Sprintf("%s(%d): 分数=%d, 准度=%.2f%%", userName, userID, record.Score, record.Accuracy))
+		return true
+	})
+
+	// 收集放弃的玩家
+	var aborted []string
+	r.aborted.Range(func(key, value interface{}) bool {
+		userID := key.(int32)
+		// 查找用户名
+		userName := fmt.Sprintf("玩家%d", userID)
+		for _, u := range r.GetAllUsers() {
+			if u.ID == userID {
+				userName = u.Name
+				break
+			}
+		}
+		aborted = append(aborted, fmt.Sprintf("%s(%d)", userName, userID))
+		return true
+	})
+
+	logMsg := fmt.Sprintf("房间 `%s` 游玩结束 - 房主: %s(%d), 谱面: %s", r.ID.Value, host.Name, host.ID, chartName)
+	if len(results) > 0 {
+		logMsg += fmt.Sprintf(" | 成绩: %v", results)
+	}
+	if len(aborted) > 0 {
+		logMsg += fmt.Sprintf(" | 放弃: %v", aborted)
+	}
+	log.Printf(logMsg)
 }
