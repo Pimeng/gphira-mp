@@ -1,0 +1,5 @@
+# Phira-MP 服务器配置
+
+# 允许观察的用户ID列表
+monitors:
+  - 2
