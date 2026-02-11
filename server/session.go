@@ -66,7 +66,7 @@ func (s *Session) recvLoop() {
 
 		cmd, err := s.Stream.Recv()
 		if err != nil {
-			log.Printf("会话 %s 接收错误: %v", s.ID, err)
+			RateLimitedLog("会话 %s 接收错误: %v", s.ID, err)
 			s.handleDisconnect()
 			return
 		}
@@ -90,11 +90,11 @@ func (s *Session) recvLoop() {
 
 		// 记录接收到的命令类型（只在 DEBUG 模式下输出）
 		if s.server.IsDebugEnabled() {
-			log.Printf("会话 %s 收到命令: 类型=%d", s.ID, cmd.Type)
+			RateLimitedLog("会话 %s 收到命令: 类型=%d", s.ID, cmd.Type)
 		}
 
 		if err := s.handleCommand(cmd); err != nil {
-			log.Printf("会话 %s 处理命令错误: %v", s.ID, err)
+			RateLimitedLog("会话 %s 处理命令错误: %v", s.ID, err)
 		}
 	}
 }
@@ -249,7 +249,7 @@ func (s *Session) handleAuthenticate(token string) error {
 	})
 }
 
-// handleChat 处理聊天
+// handleChat 处理聊天（已禁用，强制替换为规范提示）
 func (s *Session) handleChat(message string) error {
 	room := s.User.GetRoom()
 	if room == nil {
@@ -259,10 +259,11 @@ func (s *Session) handleChat(message string) error {
 		})
 	}
 
+	// 聊天功能已禁用，强制替换为规范提示消息
 	room.SendMessage(common.Message{
 		Type:    common.MsgChat,
 		User:    s.User.ID,
-		Content: message,
+		Content: "为符合规范，该服务器已禁用聊天功能",
 	})
 
 	return s.Send(common.ServerCommand{
@@ -353,10 +354,65 @@ func (s *Session) handleCreateRoom(roomId common.RoomId) error {
 		User: s.User.ID,
 	})
 
+	// 如果启用了回放录制，插入虚拟monitor并设置live模式
+	if s.server.GetReplayRecorder() != nil && s.server.GetHTTPServer() != nil && s.server.GetHTTPServer().IsReplayEnabled() {
+		s.setupVirtualMonitorForReplay(room)
+	}
+
 	return s.Send(common.ServerCommand{
 		Type:             common.ServerCmdCreateRoom,
 		CreateRoomResult: &common.Result[struct{}]{Ok: &struct{}{}},
 	})
+}
+
+// setupVirtualMonitorForReplay 为回放录制设置虚拟monitor
+func (s *Session) setupVirtualMonitorForReplay(room *Room) {
+	// 设置房间为live模式
+	room.SetLive(true)
+
+	// 创建虚拟monitor用户信息
+	virtualUser := &common.UserInfo{
+		ID:      2_000_000_000, // 虚拟monitor的固定ID
+		Name:    "回放录制器",
+		Monitor: true,
+	}
+
+	// 广播虚拟monitor加入房间
+	room.Broadcast(common.ServerCommand{
+		Type:           common.ServerCmdOnJoinRoom,
+		OnJoinRoomUser: virtualUser,
+	})
+
+	// 发送系统消息
+	room.SendMessage(common.Message{
+		Type: common.MsgJoinRoom,
+		User: virtualUser.ID,
+		Name: virtualUser.Name,
+	})
+
+	log.Printf("房间 %s 已启用回放录制模式（虚拟monitor加入）", room.ID.Value)
+
+	// 延迟2秒后播报虚拟monitor退出
+	go func() {
+		time.Sleep(2 * time.Second)
+
+		// 检查房间是否还存在
+		if s.server.GetRoom(room.ID) == nil {
+			return
+		}
+
+		// 广播虚拟monitor离开
+		room.Broadcast(common.ServerCommand{
+			Type: common.ServerCmdMessage,
+			Message: &common.Message{
+				Type: common.MsgLeaveRoom,
+				User: virtualUser.ID,
+				Name: virtualUser.Name,
+			},
+		})
+
+		log.Printf("房间 %s 虚拟monitor已退出，房间保持live模式", room.ID.Value)
+	}()
 }
 
 // handleJoinRoom 处理加入房间

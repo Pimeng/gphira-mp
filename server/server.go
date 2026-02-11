@@ -106,6 +106,16 @@ func (s *Server) Stop() {
 
 // handleConnection 处理新连接
 func (s *Server) handleConnection(conn net.Conn) {
+	// 如果启用了PROXY Protocol，尝试解析真实IP
+	if s.config.TCPProxyProtocol {
+		info, _, err := ParseProxyProtocol(conn, nil)
+		if err == nil && info != nil && info.SourceIP != nil {
+			// 包装连接以使用真实IP
+			conn = NewProxyConn(conn, info)
+			log.Printf("[PROXY] 解析到真实IP: %s", info.SourceIP.String())
+		}
+	}
+
 	// 创建Stream
 	stream, err := common.NewServerStream(conn)
 	if err != nil {

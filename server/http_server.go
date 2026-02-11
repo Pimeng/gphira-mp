@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,6 +36,12 @@ type HTTPServer struct {
 	// 运行时配置
 	replayEnabled       bool
 	roomCreationEnabled bool
+
+	// 真实IP头配置
+	realIPHeader string
+
+	// 认证限流器
+	authLimiter *AuthLimiter
 }
 
 // HTTPConfig HTTP配置
@@ -64,6 +71,8 @@ func NewHTTPServer(server *Server, config HTTPConfig) *HTTPServer {
 		otpManager:          NewOTPManager(),
 		replayEnabled:       false,
 		roomCreationEnabled: true,
+		realIPHeader:        server.config.RealIPHeader,
+		authLimiter:         NewAuthLimiter(),
 	}
 
 	// 加载管理员数据
@@ -122,6 +131,11 @@ func (h *HTTPServer) Start() error {
 
 // Stop 停止HTTP服务
 func (h *HTTPServer) Stop() error {
+	// 停止认证限流器
+	if h.authLimiter != nil {
+		h.authLimiter.Stop()
+	}
+
 	if h.httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -248,13 +262,35 @@ func extractToken(r *http.Request) string {
 // 管理员认证中间件
 func (h *HTTPServer) withAdminAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		clientIP := h.getClientIP(r)
+
+		// 检查IP是否被封禁
+		if h.authLimiter.IsBlocked(clientIP) {
+			remaining := h.authLimiter.GetBlockTimeRemaining(clientIP)
+			writeError(w, http.StatusTooManyRequests, "too-many-requests")
+			log.Printf("[安全] IP %s 因多次认证失败被封禁，剩余时间: %v", clientIP, remaining)
+			return
+		}
+
+		// 检查是否允许尝试
+		if !h.authLimiter.AllowAttempt(clientIP) {
+			remaining := h.authLimiter.GetBlockTimeRemaining(clientIP)
+			writeError(w, http.StatusTooManyRequests, "too-many-requests")
+			log.Printf("[安全] IP %s 触发认证限流，封禁 %v", clientIP, remaining)
+			return
+		}
+
 		// 检查是否配置了永久token
 		if h.config.AdminToken != "" {
 			token := extractToken(r)
 			if token != h.config.AdminToken {
+				remaining := h.authLimiter.GetRemainingAttempts(clientIP)
 				writeError(w, http.StatusUnauthorized, "unauthorized")
+				log.Printf("[安全] IP %s 管理员认证失败，剩余尝试次数: %d", clientIP, remaining)
 				return
 			}
+			// 认证成功，清除失败记录
+			h.authLimiter.RecordSuccess(clientIP)
 			handler(w, r)
 			return
 		}
@@ -262,22 +298,45 @@ func (h *HTTPServer) withAdminAuth(handler http.HandlerFunc) http.HandlerFunc {
 		// 未配置永久token，检查临时token
 		token := extractToken(r)
 		if token == "" {
+			remaining := h.authLimiter.GetRemainingAttempts(clientIP)
 			writeError(w, http.StatusUnauthorized, "unauthorized")
+			log.Printf("[安全] IP %s 未提供token，剩余尝试次数: %d", clientIP, remaining)
 			return
 		}
 
 		// 验证临时token
-		if !h.otpManager.ValidateTempToken(token, getClientIP(r)) {
+		if !h.otpManager.ValidateTempToken(token, clientIP) {
+			remaining := h.authLimiter.GetRemainingAttempts(clientIP)
 			writeError(w, http.StatusUnauthorized, "token-expired")
+			log.Printf("[安全] IP %s 临时token验证失败，剩余尝试次数: %d", clientIP, remaining)
 			return
 		}
 
+		// 认证成功，清除失败记录
+		h.authLimiter.RecordSuccess(clientIP)
 		handler(w, r)
 	}
 }
 
-// 获取客户端IP
-func getClientIP(r *http.Request) string {
+// getClientIP 获取客户端IP（HTTP服务使用配置的头）
+func (h *HTTPServer) getClientIP(r *http.Request) string {
+	// 如果配置了特定的真实IP头，优先使用
+	if h.realIPHeader != "" {
+		if ip := r.Header.Get(h.realIPHeader); ip != "" {
+			// 处理可能包含多个IP的情况（如X-Forwarded-For）
+			ips := strings.Split(ip, ",")
+			if len(ips) > 0 {
+				return strings.TrimSpace(ips[0])
+			}
+		}
+	}
+
+	// 默认使用标准方法
+	return getClientIPFromRequest(r)
+}
+
+// getClientIPFromRequest 从请求中获取客户端IP（标准方法）
+func getClientIPFromRequest(r *http.Request) string {
 	// 检查X-Forwarded-For
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		ips := strings.Split(xff, ",")
@@ -292,7 +351,11 @@ func getClientIP(r *http.Request) string {
 	}
 
 	// 使用RemoteAddr
-	return strings.Split(r.RemoteAddr, ":")[0]
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // 解析请求体

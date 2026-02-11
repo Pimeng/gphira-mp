@@ -19,12 +19,12 @@ type RoomListResponse struct {
 
 // RoomInfo 房间信息
 type RoomInfo struct {
-	RoomID  string     `json:"roomid"`
-	Cycle   bool       `json:"cycle"`
-	Lock    bool       `json:"lock"`
-	Host    UserBrief  `json:"host"`
-	State   string     `json:"state"`
-	Chart   *ChartInfo `json:"chart,omitempty"`
+	RoomID  string      `json:"roomid"`
+	Cycle   bool        `json:"cycle"`
+	Lock    bool        `json:"lock"`
+	Host    UserBrief   `json:"host"`
+	State   string      `json:"state"`
+	Chart   *ChartInfo  `json:"chart,omitempty"`
 	Players []UserBrief `json:"players"`
 }
 
@@ -105,17 +105,17 @@ type ReplayAuthRequest struct {
 
 // ReplayAuthResponse 回放认证响应
 type ReplayAuthResponse struct {
-	OK           bool           `json:"ok"`
-	UserID       int32          `json:"userId"`
-	Charts       []ChartReplay  `json:"charts"`
-	SessionToken string         `json:"sessionToken"`
-	ExpiresAt    int64          `json:"expiresAt"`
+	OK           bool          `json:"ok"`
+	UserID       int32         `json:"userId"`
+	Charts       []ChartReplay `json:"charts"`
+	SessionToken string        `json:"sessionToken"`
+	ExpiresAt    int64         `json:"expiresAt"`
 }
 
 // ChartReplay 谱面回放信息
 type ChartReplay struct {
-	ChartID int32          `json:"chartId"`
-	Replays []ReplayInfo   `json:"replays"`
+	ChartID int32        `json:"chartId"`
+	Replays []ReplayInfo `json:"replays"`
 }
 
 // ReplayInfo 回放信息
@@ -184,7 +184,7 @@ func (h *HTTPServer) handleReplayAuth(w http.ResponseWriter, r *http.Request) {
 // getUserReplays 获取用户回放列表
 func getUserReplays(userID int32) []ChartReplay {
 	recordDir := filepath.Join("record", fmt.Sprintf("%d", userID))
-	
+
 	entries, err := os.ReadDir(recordDir)
 	if err != nil {
 		return []ChartReplay{}
@@ -297,7 +297,7 @@ func (h *HTTPServer) handleReplayDownload(w http.ResponseWriter, r *http.Request
 	}
 
 	// 构建文件路径
-	filepath := filepath.Join("record", fmt.Sprintf("%d", session.UserID), 
+	filepath := filepath.Join("record", fmt.Sprintf("%d", session.UserID),
 		fmt.Sprintf("%d", chartID), fmt.Sprintf("%d.phirarec", timestamp))
 
 	// 检查文件是否存在
@@ -410,7 +410,7 @@ func (h *HTTPServer) handleOTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientIP := getClientIP(r)
+	clientIP := h.getClientIP(r)
 	otpInfo := h.otpManager.GenerateOTP(clientIP)
 
 	writeOK(w, map[string]interface{}{
@@ -452,7 +452,7 @@ func (h *HTTPServer) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientIP := getClientIP(r)
+	clientIP := h.getClientIP(r)
 	tempToken, ok := h.otpManager.ValidateOTP(req.SSID, req.OTP, clientIP)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid-or-expired-otp")
