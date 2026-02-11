@@ -14,17 +14,27 @@ type Chart struct {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	LiveMode bool    `yaml:"live_mode"` // 是否启用直播模式
-	Monitors []int32 `yaml:"monitors"`  // 允许观察的用户ID列表（直播模式启用时生效）
-	LogLevel string  `yaml:"log_level"` // debug, info, warn, error
+	LiveMode       bool    `yaml:"live_mode"`        // 是否启用直播模式
+	Monitors       []int32 `yaml:"monitors"`         // 允许观察的用户ID列表（直播模式启用时生效）
+	LogLevel       string  `yaml:"log_level"`        // debug, info, warn, error
+	HTTPService    bool    `yaml:"http_service"`     // 是否启用HTTP服务
+	HTTPPort       int     `yaml:"http_port"`        // HTTP服务端口
+	AdminToken     string  `yaml:"admin_token"`      // 管理员token
+	AdminDataPath  string  `yaml:"admin_data_path"`  // 管理员数据文件路径
+	DefaultMaxUsers int    `yaml:"default_max_users"` // 每个房间默认最大玩家数
 }
 
 // DefaultConfig 返回默认配置
 func DefaultConfig() ServerConfig {
 	return ServerConfig{
-		LiveMode: false, // 默认关闭直播模式
-		Monitors: []int32{2},
-		LogLevel: "info", // 默认只输出 info 级别日志
+		LiveMode:        false, // 默认关闭直播模式
+		Monitors:        []int32{2},
+		LogLevel:        "info", // 默认只输出 info 级别日志
+		HTTPService:     false,  // 默认关闭HTTP服务
+		HTTPPort:        12347,  // 默认HTTP端口
+		AdminToken:      "",     // 默认无管理员token
+		AdminDataPath:   "",     // 默认使用PHIRA_MP_HOME或工作目录
+		DefaultMaxUsers: 8,      // 默认每个房间最大8人
 	}
 }
 

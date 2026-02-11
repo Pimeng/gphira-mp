@@ -206,6 +206,17 @@ func (s *Session) handleAuthenticate(token string) error {
 		return err
 	}
 
+	// 检查用户是否被封禁
+	if s.server.IsUserBanned(user.ID) {
+		s.Send(common.ServerCommand{
+			Type: common.ServerCmdAuthenticate,
+			AuthenticateResult: &common.Result[common.AuthResult]{
+				Err: strPtr("用户已被封禁"),
+			},
+		})
+		return fmt.Errorf("user %d is banned", user.ID)
+	}
+
 	// 检查是否已有相同用户在线
 	if existingUser := s.server.GetUser(user.ID); existingUser != nil {
 		// 重连逻辑
@@ -278,6 +289,12 @@ func (s *Session) handleTouches(frames []common.TouchFrame) error {
 		TouchesPlayer: s.User.ID,
 		TouchesFrames: frames,
 	})
+
+	// 录制回放
+	if recorder := s.server.GetReplayRecorder(); recorder != nil {
+		recorder.RecordTouch(room.ID.Value, s.User.ID, frames)
+	}
+
 	return nil
 }
 
@@ -294,6 +311,12 @@ func (s *Session) handleJudges(judges []common.JudgeEvent) error {
 		JudgesPlayer: s.User.ID,
 		JudgesEvents: judges,
 	})
+
+	// 录制回放
+	if recorder := s.server.GetReplayRecorder(); recorder != nil {
+		recorder.RecordJudge(room.ID.Value, s.User.ID, judges)
+	}
+
 	return nil
 }
 
@@ -303,6 +326,14 @@ func (s *Session) handleCreateRoom(roomId common.RoomId) error {
 		return s.Send(common.ServerCommand{
 			Type:             common.ServerCmdCreateRoom,
 			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("已在房间中")},
+		})
+	}
+
+	// 检查是否允许创建房间
+	if !s.server.IsRoomCreationEnabled() {
+		return s.Send(common.ServerCommand{
+			Type:             common.ServerCmdCreateRoom,
+			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("房间创建已被禁用")},
 		})
 	}
 
@@ -342,6 +373,14 @@ func (s *Session) handleJoinRoom(roomId common.RoomId, monitor bool) error {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
 			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("房间不存在")},
+		})
+	}
+
+	// 检查用户是否被禁止进入该房间
+	if s.server.IsUserBannedFromRoom(s.User.ID, roomId.Value) {
+		return s.Send(common.ServerCommand{
+			Type:           common.ServerCmdJoinRoom,
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("已被禁止进入该房间")},
 		})
 	}
 
@@ -731,6 +770,12 @@ func (s *Session) handlePlayed(recordID int32) error {
 		Accuracy:  record.Accuracy,
 		FullCombo: record.FullCombo,
 	})
+
+	// 更新回放文件的成绩ID
+	if recorder := s.server.GetReplayRecorder(); recorder != nil {
+		recorder.UpdateRecordID(room.ID.Value, s.User.ID, recordID)
+	}
+
 	room.CheckAllReady()
 
 	return s.Send(common.ServerCommand{

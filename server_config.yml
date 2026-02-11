@@ -12,3 +12,21 @@ monitors:
 # debug: 输出所有日志，包括心跳包
 # info: 只输出重要事件（连接、断开、房间操作等）
 log_level: info
+
+# 房间默认最大玩家数（1-64，默认12）
+default_max_users: 12
+
+# HTTP服务配置
+# 启用HTTP服务（用于管理API和回放功能）
+http_service: false
+
+# HTTP服务端口（默认12347）
+http_port: 12347
+
+# 管理员Token（用于访问管理API）
+# 如果不设置，可以通过OTP方式获取临时Token
+# admin_token: "your_secure_token_here"
+
+# 管理员数据文件路径（封禁数据等）
+# 默认使用 PHIRA_MP_HOME 环境变量或工作目录下的 admin_data.json
+# admin_data_path: "/path/to/admin_data.json"

@@ -336,6 +336,11 @@ func (r *Room) CheckAllReady() {
 				Type:        common.ServerCmdChangeState,
 				ChangeState: &common.RoomState{Type: common.RoomStatePlaying},
 			})
+
+			// 开始回放录制
+			if recorder := r.server.GetReplayRecorder(); recorder != nil {
+				recorder.StartRecording(r)
+			}
 		}
 
 	case InternalStatePlaying:
@@ -352,6 +357,11 @@ func (r *Room) CheckAllReady() {
 		if allDone {
 			// 输出游玩结束信息
 			r.logGameEnd()
+
+			// 停止回放录制
+			if recorder := r.server.GetReplayRecorder(); recorder != nil {
+				recorder.StopRecording(r.ID.Value)
+			}
 
 			r.SendMessage(common.Message{Type: common.MsgGameEnd})
 			r.SetState(InternalStateSelectChart)

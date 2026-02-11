@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -19,17 +20,41 @@ type Server struct {
 	rooms    sync.Map // map[common.RoomId]*Room
 
 	listener net.Listener
+
+	httpServer     *HTTPServer
+	replayRecorder *ReplayRecorder
 }
 
 // NewServer 创建新服务器
 func NewServer(config ServerConfig) *Server {
-	return &Server{
+	server := &Server{
 		config: config,
 	}
+
+	// 创建HTTP配置
+	httpConfig := HTTPConfig{
+		Enabled:       config.HTTPService,
+		Port:          config.HTTPPort,
+		AdminToken:    config.AdminToken,
+		AdminDataPath: config.AdminDataPath,
+	}
+
+	// 创建HTTP服务器
+	server.httpServer = NewHTTPServer(server, httpConfig)
+
+	// 创建回放录制器
+	server.replayRecorder = NewReplayRecorder(server.httpServer)
+
+	return server
 }
 
 // Start 启动服务器
 func (s *Server) Start(address string) error {
+	// 启动HTTP服务
+	if err := s.httpServer.Start(); err != nil {
+		return fmt.Errorf("启动HTTP服务失败: %w", err)
+	}
+
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
@@ -56,6 +81,16 @@ func (s *Server) Start(address string) error {
 
 // Stop 停止服务器
 func (s *Server) Stop() {
+	// 停止HTTP服务
+	if s.httpServer != nil {
+		s.httpServer.Stop()
+	}
+
+	// 停止所有回放录制
+	if s.replayRecorder != nil {
+		s.replayRecorder.StopAllRecordings()
+	}
+
 	if s.listener != nil {
 		s.listener.Close()
 	}
@@ -200,4 +235,38 @@ func (s *Server) PrintStats() {
 // IsDebugEnabled 是否启用 DEBUG 日志
 func (s *Server) IsDebugEnabled() bool {
 	return s.config.IsDebugEnabled()
+}
+
+// GetHTTPServer 获取HTTP服务器
+func (s *Server) GetHTTPServer() *HTTPServer {
+	return s.httpServer
+}
+
+// GetReplayRecorder 获取回放录制器
+func (s *Server) GetReplayRecorder() *ReplayRecorder {
+	return s.replayRecorder
+}
+
+// IsRoomCreationEnabled 是否允许创建房间
+func (s *Server) IsRoomCreationEnabled() bool {
+	if s.httpServer != nil {
+		return s.httpServer.IsRoomCreationEnabled()
+	}
+	return true
+}
+
+// IsUserBanned 检查用户是否被封禁
+func (s *Server) IsUserBanned(userID int32) bool {
+	if s.httpServer != nil && s.httpServer.adminData != nil {
+		return s.httpServer.adminData.IsUserBanned(userID)
+	}
+	return false
+}
+
+// IsUserBannedFromRoom 检查用户是否被禁止进入房间
+func (s *Server) IsUserBannedFromRoom(userID int32, roomID string) bool {
+	if s.httpServer != nil && s.httpServer.adminData != nil {
+		return s.httpServer.adminData.IsUserBannedFromRoom(userID, roomID)
+	}
+	return false
 }
