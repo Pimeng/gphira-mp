@@ -17,3 +17,5 @@ Thumbs.db
 idea/
 vscode/
 *.sublime*
+# 构建产物
+build/

@@ -17,14 +17,74 @@
 ### 安装依赖
 
 ```bash
-cd go-src
 go mod tidy
+```
+
+### 编译
+
+#### Windows
+
+使用批处理脚本：
+```batch
+# 仅编译
+.\build.bat
+
+# 编译并运行
+.\build.bat run
+
+# 清理构建目录
+.\build.bat clean
+```
+
+#### Linux / macOS
+
+使用 Shell 脚本：
+```bash
+# 赋予执行权限
+chmod +x build.sh
+
+# 仅编译
+./build.sh
+
+# 编译并运行
+./build.sh -r
+
+# 清理构建目录
+./build.sh -c
+
+# 自定义端口运行
+./build.sh -r -p 8080
+```
+
+使用 Makefile：
+```bash
+# 编译
+make build
+
+# 编译并运行
+make run
+
+# 清理
+make clean
+
+# 交叉编译 Linux 版本
+make build-linux
+
+# 编译所有平台
+make cross-compile
+
+# 查看所有选项
+make help
 ```
 
 ### 运行服务器
 
 ```bash
-go run cmd/server/main.go --port 12346
+# 直接运行（开发模式）
+go run cmd/server/main.go -port 12346
+
+# 运行编译后的版本
+./build/phira-mp-server -port 12346
 ```
 
 或使用配置文件：
