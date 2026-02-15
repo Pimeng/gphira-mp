@@ -204,30 +204,41 @@ func (s *Session) handleAuthenticate(token string) error {
 				Err: strPtr("认证失败"),
 			},
 		})
+		log.Printf("会话 %s 认证失败: %v", s.ID, err)
 		return err
 	}
 
-	// 检查用户是否被封禁
-	if s.server.IsUserBanned(user.ID) {
-		s.Send(common.ServerCommand{
-			Type: common.ServerCmdAuthenticate,
-			AuthenticateResult: &common.Result[common.AuthResult]{
-				Err: strPtr("用户已被封禁"),
-			},
-		})
-		return fmt.Errorf("user %d is banned", user.ID)
-	}
+	// 注意：不在认证时拒绝被封禁用户，允许他们连接但阻止操作
 
 	// 检查是否已有相同用户在线
+	var staleSession *Session
 	if existingUser := s.server.GetUser(user.ID); existingUser != nil {
-		// 重连逻辑
+		// 重连逻辑：检查旧会话是否还活跃
+		if oldSession := existingUser.GetSession(); oldSession != nil {
+			if !oldSession.stopped {
+				// 旧会话还活跃，标记为stale并断开
+				staleSession = oldSession
+			}
+		}
 		existingUser.SetSession(s)
 		s.User = existingUser
+		log.Printf("用户 `%s(%d)` 重新连接", existingUser.Name, existingUser.ID)
 	} else {
 		user.server = s.server
 		user.SetSession(s)
 		s.server.AddUser(user)
 		s.User = user
+		log.Printf("用户 `%s(%d)` 首次连接", user.Name, user.ID)
+	}
+
+	// 如果用户被封禁且在房间中，将其移出房间
+	if s.server.IsUserBanned(s.User.ID) {
+		if room := s.User.GetRoom(); room != nil {
+			log.Printf("被封禁用户 `%s(%d)` 从房间 `%s` 移除", s.User.Name, s.User.ID, room.ID.Value)
+			if room.OnUserLeave(s.User) {
+				s.server.RemoveRoom(room.ID, "房间为空")
+			}
+		}
 	}
 
 	s.authenticated = true
@@ -239,7 +250,8 @@ func (s *Session) handleAuthenticate(token string) error {
 		clientRoomState = &state
 	}
 
-	return s.Send(common.ServerCommand{
+	// 发送认证成功响应
+	if err := s.Send(common.ServerCommand{
 		Type: common.ServerCmdAuthenticate,
 		AuthenticateResult: &common.Result[common.AuthResult]{
 			Ok: &common.AuthResult{
@@ -247,11 +259,36 @@ func (s *Session) handleAuthenticate(token string) error {
 				Room: clientRoomState,
 			},
 		},
-	})
+	}); err != nil {
+		return err
+	}
+
+	// 断开旧会话（在发送响应后）
+	if staleSession != nil {
+		log.Printf("断开用户 `%s(%d)` 的旧会话 %s", s.User.Name, s.User.ID, staleSession.ID)
+		go staleSession.Stop()
+	}
+
+	monitorSuffix := ""
+	if s.User.IsMonitor() {
+		monitorSuffix = " [观察者]"
+	}
+	log.Printf("用户 `%s(%d)`%s 认证成功 (会话: %s, 协议版本: %d)",
+		s.User.Name, s.User.ID, monitorSuffix, s.ID, s.Stream.Version())
+
+	return nil
 }
 
 // handleChat 处理聊天（已禁用，强制替换为规范提示）
 func (s *Session) handleChat(message string) error {
+	// 检查用户是否被封禁
+	if s.server.IsUserBanned(s.User.ID) {
+		return s.Send(common.ServerCommand{
+			Type:       common.ServerCmdChat,
+			ChatResult: &common.Result[struct{}]{Err: strPtr("用户已被封禁")},
+		})
+	}
+
 	room := s.User.GetRoom()
 	if room == nil {
 		return s.Send(common.ServerCommand{
@@ -324,6 +361,14 @@ func (s *Session) handleJudges(judges []common.JudgeEvent) error {
 
 // handleCreateRoom 处理创建房间
 func (s *Session) handleCreateRoom(roomId common.RoomId) error {
+	// 检查用户是否被封禁
+	if s.server.IsUserBanned(s.User.ID) {
+		return s.Send(common.ServerCommand{
+			Type:             common.ServerCmdCreateRoom,
+			CreateRoomResult: &common.Result[struct{}]{Err: strPtr("用户已被封禁")},
+		})
+	}
+
 	if s.User.GetRoom() != nil {
 		return s.Send(common.ServerCommand{
 			Type:             common.ServerCmdCreateRoom,
@@ -378,27 +423,45 @@ func (s *Session) setupVirtualMonitorForReplay(room *Room) {
 		Monitor: true,
 	}
 
-	// 广播虚拟monitor加入房间
-	room.Broadcast(common.ServerCommand{
-		Type:           common.ServerCmdOnJoinRoom,
-		OnJoinRoomUser: virtualUser,
-	})
-
-	// 发送系统消息
-	room.SendMessage(common.Message{
-		Type: common.MsgJoinRoom,
-		User: virtualUser.ID,
-		Name: virtualUser.Name,
-	})
-
 	log.Printf("房间 %s 已启用回放录制模式（虚拟monitor加入）", room.ID.Value)
 
-	// 延迟2秒后播报虚拟monitor退出
+	// 使用goroutine异步发送虚拟monitor消息，避免阻塞房间创建响应
+	// 这模拟了TypeScript中的setImmediate行为
 	go func() {
+		// 短暂延迟，确保房间创建响应已发送
+		time.Sleep(50 * time.Millisecond)
+
+		// 检查房间是否还存在且用户还在房间中
+		currentRoom := s.server.GetRoom(room.ID)
+		if currentRoom == nil {
+			return
+		}
+		if s.User == nil || s.User.GetRoom() == nil || s.User.GetRoom().ID != room.ID {
+			return
+		}
+
+		// 发送虚拟monitor加入消息给房主
+		s.User.Send(common.ServerCommand{
+			Type:           common.ServerCmdOnJoinRoom,
+			OnJoinRoomUser: virtualUser,
+		})
+		s.User.Send(common.ServerCommand{
+			Type: common.ServerCmdMessage,
+			Message: &common.Message{
+				Type: common.MsgJoinRoom,
+				User: virtualUser.ID,
+				Name: virtualUser.Name,
+			},
+		})
+
+		// 再延迟2秒后播报虚拟monitor退出
 		time.Sleep(2 * time.Second)
 
-		// 检查房间是否还存在
+		// 再次检查房间和用户状态
 		if s.server.GetRoom(room.ID) == nil {
+			return
+		}
+		if s.User == nil || s.User.GetRoom() == nil || s.User.GetRoom().ID != room.ID {
 			return
 		}
 
@@ -418,6 +481,14 @@ func (s *Session) setupVirtualMonitorForReplay(room *Room) {
 
 // handleJoinRoom 处理加入房间
 func (s *Session) handleJoinRoom(roomId common.RoomId, monitor bool) error {
+	// 检查用户是否被封禁
+	if s.server.IsUserBanned(s.User.ID) {
+		return s.Send(common.ServerCommand{
+			Type:           common.ServerCmdJoinRoom,
+			JoinRoomResult: &common.Result[common.JoinRoomResponse]{Err: strPtr("用户已被封禁")},
+		})
+	}
+
 	if s.User.GetRoom() != nil {
 		return s.Send(common.ServerCommand{
 			Type:           common.ServerCmdJoinRoom,
@@ -476,6 +547,12 @@ func (s *Session) handleJoinRoom(roomId common.RoomId, monitor bool) error {
 		room.SetLive(true)
 	}
 
+	monitorSuffix := ""
+	if monitor {
+		monitorSuffix = " [观察者]"
+	}
+	log.Printf("玩家 `%s(%d)`%s 加入房间 `%s`", s.User.Name, s.User.ID, monitorSuffix, room.ID.Value)
+
 	room.Broadcast(common.ServerCommand{
 		Type: common.ServerCmdOnJoinRoom,
 		OnJoinRoomUser: &common.UserInfo{
@@ -516,7 +593,54 @@ func (s *Session) handleJoinRoom(roomId common.RoomId, monitor bool) error {
 	})
 }
 
-// handleLeaveRoom 处理离开房间
+// handleRequestStart 处理请求开始
+func (s *Session) handleRequestStart() error {
+	room := s.User.GetRoom()
+	if room == nil {
+		return s.Send(common.ServerCommand{
+			Type:               common.ServerCmdRequestStart,
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
+		})
+	}
+
+	if room.GetState() != InternalStateSelectChart {
+		return s.Send(common.ServerCommand{
+			Type:               common.ServerCmdRequestStart,
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("无效状态")},
+		})
+	}
+
+	if err := room.CheckHost(s.User); err != nil {
+		return s.Send(common.ServerCommand{
+			Type:               common.ServerCmdRequestStart,
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("只有房主可以开始")},
+		})
+	}
+
+	if room.GetChart() == nil {
+		return s.Send(common.ServerCommand{
+			Type:               common.ServerCmdRequestStart,
+			RequestStartResult: &common.Result[struct{}]{Err: strPtr("未选择谱面")},
+		})
+	}
+
+	log.Printf("玩家 `%s(%d)` 在房间 `%s` 请求开始游戏", s.User.Name, s.User.ID, room.ID.Value)
+
+	room.ResetGameTime()
+	room.SendMessage(common.Message{
+		Type: common.MsgGameStart,
+		User: s.User.ID,
+	})
+	room.SetState(InternalStateWaitForReady)
+	room.started.Store(s.User.ID, true)
+	room.OnStateChange()
+	room.CheckAllReady()
+
+	return s.Send(common.ServerCommand{
+		Type:               common.ServerCmdRequestStart,
+		RequestStartResult: &common.Result[struct{}]{Ok: &struct{}{}},
+	})
+}
 func (s *Session) handleLeaveRoom() error {
 	room := s.User.GetRoom()
 	if room == nil {
@@ -652,53 +776,6 @@ func (s *Session) handleSelectChart(chartID int32) error {
 	})
 }
 
-// handleRequestStart 处理请求开始
-func (s *Session) handleRequestStart() error {
-	room := s.User.GetRoom()
-	if room == nil {
-		return s.Send(common.ServerCommand{
-			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("不在房间中")},
-		})
-	}
-
-	if room.GetState() != InternalStateSelectChart {
-		return s.Send(common.ServerCommand{
-			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("无效状态")},
-		})
-	}
-
-	if err := room.CheckHost(s.User); err != nil {
-		return s.Send(common.ServerCommand{
-			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("只有房主可以开始")},
-		})
-	}
-
-	if room.GetChart() == nil {
-		return s.Send(common.ServerCommand{
-			Type:               common.ServerCmdRequestStart,
-			RequestStartResult: &common.Result[struct{}]{Err: strPtr("未选择谱面")},
-		})
-	}
-
-	room.ResetGameTime()
-	room.SendMessage(common.Message{
-		Type: common.MsgGameStart,
-		User: s.User.ID,
-	})
-	room.SetState(InternalStateWaitForReady)
-	room.started.Store(s.User.ID, true)
-	room.OnStateChange()
-	room.CheckAllReady()
-
-	return s.Send(common.ServerCommand{
-		Type:               common.ServerCmdRequestStart,
-		RequestStartResult: &common.Result[struct{}]{Ok: &struct{}{}},
-	})
-}
-
 // handleReady 处理准备
 func (s *Session) handleReady() error {
 	room := s.User.GetRoom()
@@ -767,7 +844,7 @@ func (s *Session) handleCancelReady() error {
 		room.started = sync.Map{}
 		room.results = sync.Map{}
 		room.aborted = sync.Map{}
-		
+
 		room.SendMessage(common.Message{
 			Type: common.MsgCancelGame,
 			User: s.User.ID,

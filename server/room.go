@@ -293,7 +293,12 @@ func (r *Room) OnUserLeave(user *User) bool {
 		}
 		// 随机选择新房主
 		newHost := users[rand.Intn(len(users))]
+		oldHost := r.GetHost()
 		r.SetHost(newHost)
+
+		log.Printf("房间 `%s` 房主变更: %s(%d) -> %s(%d) (原房主离开)",
+			r.ID.Value, oldHost.Name, oldHost.ID, newHost.Name, newHost.ID)
+
 		r.SendMessage(common.Message{
 			Type: common.MsgNewHost,
 			User: newHost.ID,
@@ -322,6 +327,10 @@ func (r *Room) CheckAllReady() {
 	case InternalStateWaitForReady:
 		// 只检查普通玩家，不包括观察者
 		users := r.GetUsers()
+		if len(users) == 0 {
+			return
+		}
+
 		allReady := true
 		for _, u := range users {
 			if _, ok := r.started.Load(u.ID); !ok {
@@ -333,7 +342,17 @@ func (r *Room) CheckAllReady() {
 			// 清空之前的游戏状态
 			r.results = sync.Map{}
 			r.aborted = sync.Map{}
-			
+
+			// 记录游戏开始日志
+			host := r.GetHost()
+			chart := r.GetChart()
+			chartName := "未知谱面"
+			if chart != nil {
+				chartName = chart.Name
+			}
+			log.Printf("房间 `%s` 游戏开始 - 房主: %s(%d), 谱面: %s, 玩家数: %d",
+				r.ID.Value, host.Name, host.ID, chartName, len(users))
+
 			r.SendMessage(common.Message{Type: common.MsgStartPlaying})
 			r.ResetGameTime()
 			r.SetState(InternalStatePlaying)
@@ -350,6 +369,10 @@ func (r *Room) CheckAllReady() {
 
 	case InternalStatePlaying:
 		users := r.GetUsers()
+		if len(users) == 0 {
+			return
+		}
+
 		allDone := true
 		for _, u := range users {
 			_, hasResult := r.results.Load(u.ID)
@@ -369,12 +392,12 @@ func (r *Room) CheckAllReady() {
 			}
 
 			r.SendMessage(common.Message{Type: common.MsgGameEnd})
-			
+
 			// 清空游戏状态
 			r.started = sync.Map{}
 			r.results = sync.Map{}
 			r.aborted = sync.Map{}
-			
+
 			r.SetState(InternalStateSelectChart)
 
 			// 循环模式：切换房主

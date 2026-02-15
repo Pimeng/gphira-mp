@@ -135,14 +135,37 @@ func (u *User) Send(cmd common.ServerCommand) {
 
 // Dangle 处理用户连接断开
 func (u *User) Dangle() {
-	// 检查是否在游戏中，如果是则立即处理
 	room := u.GetRoom()
+
+	// 检查是否在游戏中，如果是则立即处理
 	if room != nil && room.GetState() == InternalStatePlaying {
-		log.Printf("用户 %d(%s) 在游戏中断开连接，立即处理", u.ID, u.Name)
-		u.HandleDangleTimeout()
+		log.Printf("用户 `%s(%d)` 在房间 `%s` 游戏中断开连接，立即移除", u.Name, u.ID, room.ID.Value)
+		u.server.RemoveUser(u.ID)
+		// 标记为放弃
+		room.aborted.Store(u.ID, true)
+		if room.OnUserLeave(u) {
+			u.server.RemoveRoom(room.ID, "房间为空")
+		} else {
+			// 检查游戏是否结束
+			room.CheckAllReady()
+		}
 		return
 	}
 
+	// 检查用户是否被封禁，如果是则立即处理
+	if u.server.IsUserBanned(u.ID) {
+		log.Printf("用户 `%s(%d)` 已被封禁，立即移除", u.Name, u.ID)
+		if room != nil {
+			u.server.RemoveUser(u.ID)
+			if room.OnUserLeave(u) {
+				u.server.RemoveRoom(room.ID, "房间为空")
+			}
+		}
+		return
+	}
+
+	// 正常悬挂，设置10秒超时
+	log.Printf("用户 `%s(%d)` 连接断开，进入挂起状态", u.Name, u.ID)
 	u.mu.Lock()
 	if u.dangleMark != nil {
 		u.dangleMark.Stop()
@@ -155,33 +178,26 @@ func (u *User) Dangle() {
 
 // HandleDangleTimeout 处理悬挂超时
 func (u *User) HandleDangleTimeout() {
-	room := u.GetRoom()
-	if room != nil {
-		if room.GetState() == InternalStatePlaying {
-			// 游戏中断开，标记为放弃并离开
-			log.Printf("用户 %d(%s) 在游戏中断开，标记为放弃", u.ID, u.Name)
-			room.aborted.Store(u.ID, true)
-			u.server.RemoveUser(u.ID)
-			if room.OnUserLeave(u) {
-				u.server.RemoveRoom(room.ID, "房间为空")
-			}
-			return
-		}
-	}
-
-	// 检查是否还在悬挂状态
+	// 检查是否已重连（dangleMark被清除）
 	u.mu.Lock()
-	if u.dangleMark != nil {
+	if u.dangleMark == nil {
 		u.mu.Unlock()
 		return
 	}
+	u.dangleMark = nil
 	u.mu.Unlock()
 
-	if room != nil {
+	room := u.GetRoom()
+	if room == nil {
+		// 用户不在房间中，直接移除
 		u.server.RemoveUser(u.ID)
-		if room.OnUserLeave(u) {
-			u.server.RemoveRoom(room.ID, "房间为空")
-		}
+		return
+	}
+
+	log.Printf("用户 `%s(%d)` 挂起超时，从房间 `%s` 移除", u.Name, u.ID, room.ID.Value)
+	u.server.RemoveUser(u.ID)
+	if room.OnUserLeave(u) {
+		u.server.RemoveRoom(room.ID, "房间为空")
 	}
 }
 
