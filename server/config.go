@@ -14,6 +14,8 @@ type Chart struct {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
+	Host            string  `yaml:"host"`              // 服务器监听地址
+	Port            int     `yaml:"port"`              // 服务器监听端口
 	LiveMode        bool    `yaml:"live_mode"`         // 是否启用直播模式
 	Monitors        []int32 `yaml:"monitors"`          // 允许观察的用户ID列表（直播模式启用时生效）
 	LogLevel        string  `yaml:"log_level"`         // debug, info, warn, error
@@ -31,14 +33,16 @@ type ServerConfig struct {
 // DefaultConfig 返回默认配置
 func DefaultConfig() ServerConfig {
 	return ServerConfig{
-		LiveMode:        false, // 默认关闭直播模式
+		Host:            "0.0.0.0", // 默认监听所有网卡
+		Port:            12346,     // 默认端口
+		LiveMode:        false,     // 默认关闭直播模式
 		Monitors:        []int32{2},
-		LogLevel:        "info", // 默认只输出 info 级别日志
-		HTTPService:     false,  // 默认关闭HTTP服务
-		HTTPPort:        12347,  // 默认HTTP端口
-		AdminToken:      "",     // 默认无管理员token
-		AdminDataPath:   "",     // 默认使用PHIRA_MP_HOME或工作目录
-		DefaultMaxUsers: 8,      // 默认每个房间最大8人
+		LogLevel:        "info",  // 默认只输出 info 级别日志
+		HTTPService:     false,   // 默认关闭HTTP服务
+		HTTPPort:        12347,   // 默认HTTP端口
+		AdminToken:      "",      // 默认无管理员token
+		AdminDataPath:   "",      // 默认使用PHIRA_MP_HOME或工作目录
+		DefaultMaxUsers: 8,       // 默认每个房间最大8人
 
 		// TCP代理真实IP支持默认关闭
 		TCPProxyProtocol: false,

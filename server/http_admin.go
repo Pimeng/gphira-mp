@@ -15,18 +15,33 @@ type AdminRoomInfo struct {
 	Locked    bool            `json:"locked"`
 	Cycle     bool            `json:"cycle"`
 	Host      UserBrief       `json:"host"`
-	State     string          `json:"state"`
+	State     interface{}     `json:"state"`
 	Chart     *ChartInfo      `json:"chart,omitempty"`
 	Users     []AdminUserInfo `json:"users"`
 	Monitors  []AdminUserInfo `json:"monitors"`
 }
 
+// AdminRoomStateInfo 管理员房间状态信息
+type AdminRoomStateInfo struct {
+	Type          string  `json:"type"`
+	ResultsCount  int     `json:"results_count,omitempty"`
+	AbortedCount  int     `json:"aborted_count,omitempty"`
+	FinishedUsers []int32 `json:"finished_users,omitempty"`
+	AbortedUsers  []int32 `json:"aborted_users,omitempty"`
+}
+
 // AdminUserInfo 管理员用户信息
 type AdminUserInfo struct {
-	ID        int32  `json:"id"`
-	Name      string `json:"name"`
-	Connected bool   `json:"connected"`
-	Monitor   bool   `json:"monitor"`
+	ID        int32   `json:"id"`
+	Name      string  `json:"name"`
+	Connected bool    `json:"connected"`
+	IsHost    bool    `json:"is_host"`
+	GameTime  float32 `json:"game_time"`
+	Language  string  `json:"language"`
+	Monitor   bool    `json:"monitor,omitempty"`
+	Finished  bool    `json:"finished,omitempty"`
+	Aborted   bool    `json:"aborted,omitempty"`
+	RecordID  *int32  `json:"record_id,omitempty"`
 }
 
 // handleAdminRooms 处理获取所有房间详情
@@ -89,6 +104,10 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 	case strings.HasSuffix(path, "/chat"):
 		// 向房间发送消息
 		h.handleAdminRoomChat(w, r, room)
+
+	case strings.HasSuffix(path, "/disband"):
+		// 解散房间
+		h.handleAdminRoomDisband(w, r, room)
 
 	default:
 		writeError(w, http.StatusNotFound, "not-found")
@@ -165,6 +184,40 @@ func (h *HTTPServer) handleAdminRoomChat(w http.ResponseWriter, r *http.Request,
 	writeOK(w, nil)
 }
 
+// handleAdminRoomDisband 处理解散房间
+func (h *HTTPServer) handleAdminRoomDisband(w http.ResponseWriter, r *http.Request, room *Room) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method-not-allowed")
+		return
+	}
+
+	// 发送解散通知
+	room.SendMessage(common.Message{
+		Type:    common.MsgChat,
+		User:    0,
+		Content: "房间已被管理员解散",
+	})
+
+	// 停止回放录制（如果有）
+	if recorder := h.server.GetReplayRecorder(); recorder != nil {
+		recorder.StopRecording(room.ID.Value)
+	}
+
+	// 断开所有用户连接
+	for _, user := range room.GetAllUsers() {
+		if session := user.GetSession(); session != nil {
+			session.Stop()
+		}
+	}
+
+	// 移除房间
+	h.server.RemoveRoom(room.ID, "管理员解散")
+
+	writeOK(w, map[string]interface{}{
+		"roomid": room.ID.Value,
+	})
+}
+
 // handleAdminUserDetail 处理查询用户详情
 func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -229,26 +282,33 @@ func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) 
 	h.saveAdminData()
 
 	// 如果需要断开连接
-	if req.Banned && req.Disconnect {
+	if req.Disconnect && req.Banned {
 		user := h.server.GetUser(req.UserID)
 		if user != nil {
 			room := user.GetRoom()
+			
+			// 如果在游戏中，标记为放弃
 			if room != nil && room.GetState() == InternalStatePlaying {
-				// 游戏中断开，标记为放弃
 				room.aborted.Store(user.ID, true)
 				room.SendMessage(common.Message{
 					Type: common.MsgAbort,
 					User: user.ID,
 				})
-				room.CheckAllReady()
 			}
-
-			// 断开用户连接
-			session := user.GetSession()
-			if session != nil {
+			
+			// 断开连接
+			if session := user.GetSession(); session != nil {
 				session.Stop()
 			}
-			h.server.RemoveUser(user.ID)
+			
+			// 从房间移除
+			if room != nil {
+				if room.OnUserLeave(user) {
+					h.server.RemoveRoom(room.ID, "房间为空")
+				} else {
+					room.CheckAllReady()
+				}
+			}
 		}
 	}
 
@@ -406,24 +466,78 @@ func (h *HTTPServer) handleAdminRoomCreationConfig(w http.ResponseWriter, r *htt
 func buildAdminRoomInfo(room *Room) AdminRoomInfo {
 	host := room.GetHost()
 
-	state := "select_chart"
-	switch room.GetState() {
+	// 构建状态信息
+	var stateInfo interface{}
+	roomState := room.GetState()
+	
+	switch roomState {
+	case InternalStateSelectChart:
+		stateInfo = AdminRoomStateInfo{Type: "select_chart"}
 	case InternalStateWaitForReady:
-		state = "waiting_for_ready"
+		stateInfo = AdminRoomStateInfo{Type: "waiting_for_ready"}
 	case InternalStatePlaying:
-		state = "playing"
+		// 收集已完成和放弃的玩家
+		var finishedUsers []int32
+		var abortedUsers []int32
+		resultsCount := 0
+		abortedCount := 0
+		
+		room.results.Range(func(key, value interface{}) bool {
+			userID := key.(int32)
+			finishedUsers = append(finishedUsers, userID)
+			resultsCount++
+			return true
+		})
+		
+		room.aborted.Range(func(key, value interface{}) bool {
+			userID := key.(int32)
+			abortedUsers = append(abortedUsers, userID)
+			abortedCount++
+			return true
+		})
+		
+		stateInfo = AdminRoomStateInfo{
+			Type:          "playing",
+			ResultsCount:  resultsCount,
+			AbortedCount:  abortedCount,
+			FinishedUsers: finishedUsers,
+			AbortedUsers:  abortedUsers,
+		}
+	default:
+		stateInfo = AdminRoomStateInfo{Type: "select_chart"}
 	}
 
 	// 获取用户列表
 	users := room.GetUsers()
 	userInfos := make([]AdminUserInfo, 0, len(users))
 	for _, u := range users {
-		userInfos = append(userInfos, AdminUserInfo{
+		userInfo := AdminUserInfo{
 			ID:        u.ID,
 			Name:      u.Name,
 			Connected: !u.IsDisconnected(),
-			Monitor:   false,
-		})
+			IsHost:    u.ID == host.ID,
+			GameTime:  float32(u.gameTime.Load()),
+			Language:  u.Lang,
+		}
+		
+		// 如果房间在游戏中，添加游戏状态信息
+		if roomState == InternalStatePlaying {
+			_, finished := room.results.Load(u.ID)
+			_, aborted := room.aborted.Load(u.ID)
+			userInfo.Finished = finished
+			userInfo.Aborted = aborted
+			
+			// 如果有成绩，添加record_id
+			if finished {
+				if record, ok := room.results.Load(u.ID); ok {
+					if r, ok := record.(*Record); ok {
+						userInfo.RecordID = &r.ID
+					}
+				}
+			}
+		}
+		
+		userInfos = append(userInfos, userInfo)
 	}
 
 	// 获取观察者列表
@@ -434,6 +548,9 @@ func buildAdminRoomInfo(room *Room) AdminRoomInfo {
 			ID:        u.ID,
 			Name:      u.Name,
 			Connected: !u.IsDisconnected(),
+			IsHost:    false,
+			GameTime:  float32(u.gameTime.Load()),
+			Language:  u.Lang,
 			Monitor:   true,
 		})
 	}
@@ -445,7 +562,7 @@ func buildAdminRoomInfo(room *Room) AdminRoomInfo {
 		Locked:   room.IsLocked(),
 		Cycle:    room.IsCycle(),
 		Host:     UserBrief{ID: host.ID, Name: host.Name},
-		State:    state,
+		State:    stateInfo,
 		Users:    userInfos,
 		Monitors: monitorInfos,
 	}
@@ -640,21 +757,15 @@ func (h *HTTPServer) handleAdminUserDisconnect(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var req struct {
-		PreserveRoom bool `json:"preserveRoom"`
-		MarkAborted  bool `json:"markAborted"`
-	}
-	parseBody(r, &req)
-
 	room := user.GetRoom()
-	if room != nil && room.GetState() == InternalStatePlaying && req.MarkAborted {
-		// 标记为放弃
+	
+	// 如果在游戏中，标记为放弃
+	if room != nil && room.GetState() == InternalStatePlaying {
 		room.aborted.Store(user.ID, true)
 		room.SendMessage(common.Message{
 			Type: common.MsgAbort,
 			User: user.ID,
 		})
-		room.CheckAllReady()
 	}
 
 	// 断开连接
@@ -663,12 +774,12 @@ func (h *HTTPServer) handleAdminUserDisconnect(w http.ResponseWriter, r *http.Re
 		session.Stop()
 	}
 
-	if !req.PreserveRoom {
-		// 从房间移除用户
-		if room != nil {
-			if room.OnUserLeave(user) {
-				h.server.RemoveRoom(room.ID, "房间为空")
-			}
+	// 从房间移除用户并触发结算检查
+	if room != nil {
+		if room.OnUserLeave(user) {
+			h.server.RemoveRoom(room.ID, "房间为空")
+		} else {
+			room.CheckAllReady()
 		}
 	}
 
