@@ -177,17 +177,32 @@ func (r *Room) GetClientRoomState(user *User) common.ClientRoomState {
 func (r *Room) AddUser(user *User, monitor bool) bool {
 	if monitor {
 		r.monitors.Lock()
-		defer r.monitors.Unlock()
 		r.monitorList = append(r.monitorList, user)
+		r.monitors.Unlock()
+
+		// 广播房间日志
+		BroadcastRoomLog(r.ID.Value, fmt.Sprintf("观察者 %s(%d) 加入了房间", user.Name, user.ID))
+
+		// 广播房间状态更新
+		BroadcastRoomUpdate(r)
+
 		return true
 	}
 
 	r.users.Lock()
-	defer r.users.Unlock()
 	if len(r.userList) >= RoomMaxUsers {
+		r.users.Unlock()
 		return false
 	}
 	r.userList = append(r.userList, user)
+	r.users.Unlock()
+
+	// 广播房间日志
+	BroadcastRoomLog(r.ID.Value, fmt.Sprintf("玩家 %s(%d) 加入了房间", user.Name, user.ID))
+
+	// 广播房间状态更新
+	BroadcastRoomUpdate(r)
+
 	return true
 }
 
@@ -282,6 +297,9 @@ func (r *Room) OnUserLeave(user *User) bool {
 		Name: user.Name,
 	})
 
+	// 广播房间日志
+	BroadcastRoomLog(r.ID.Value, fmt.Sprintf("玩家 %s(%d) 离开了房间", user.Name, user.ID))
+
 	r.RemoveUser(user.ID)
 	user.SetRoom(nil)
 
@@ -299,6 +317,9 @@ func (r *Room) OnUserLeave(user *User) bool {
 		log.Printf("房间 `%s` 房主变更: %s(%d) -> %s(%d) (原房主离开)",
 			r.ID.Value, oldHost.Name, oldHost.ID, newHost.Name, newHost.ID)
 
+		// 广播房间日志
+		BroadcastRoomLog(r.ID.Value, fmt.Sprintf("房主变更: %s(%d) -> %s(%d)", oldHost.Name, oldHost.ID, newHost.Name, newHost.ID))
+
 		r.SendMessage(common.Message{
 			Type: common.MsgNewHost,
 			User: newHost.ID,
@@ -310,6 +331,10 @@ func (r *Room) OnUserLeave(user *User) bool {
 	}
 
 	r.CheckAllReady()
+
+	// 广播房间状态更新
+	BroadcastRoomUpdate(r)
+
 	return false
 }
 
@@ -353,6 +378,9 @@ func (r *Room) CheckAllReady() {
 			log.Printf("房间 `%s` 游戏开始 - 房主: %s(%d), 谱面: %s, 玩家数: %d",
 				r.ID.Value, host.Name, host.ID, chartName, len(users))
 
+			// 广播房间日志
+			BroadcastRoomLog(r.ID.Value, fmt.Sprintf("游戏开始 - 谱面: %s, 玩家数: %d", chartName, len(users)))
+
 			r.SendMessage(common.Message{Type: common.MsgStartPlaying})
 			r.ResetGameTime()
 			r.SetState(InternalStatePlaying)
@@ -360,6 +388,9 @@ func (r *Room) CheckAllReady() {
 				Type:        common.ServerCmdChangeState,
 				ChangeState: &common.RoomState{Type: common.RoomStatePlaying},
 			})
+
+			// 广播房间状态更新
+			BroadcastRoomUpdate(r)
 
 			// 开始回放录制
 			if recorder := r.server.GetReplayRecorder(); recorder != nil {
@@ -414,6 +445,9 @@ func (r *Room) CheckAllReady() {
 				Type:        common.ServerCmdChangeState,
 				ChangeState: &common.RoomState{Type: common.RoomStateSelectChart, ChartID: chartID},
 			})
+
+			// 广播房间状态更新
+			BroadcastRoomUpdate(r)
 		}
 	}
 }
@@ -449,6 +483,9 @@ func (r *Room) CycleHost() {
 		Type:       common.ServerCmdChangeHost,
 		ChangeHost: true,
 	})
+
+	// 广播房间状态更新
+	BroadcastRoomUpdate(r)
 }
 
 // OnStateChange 状态变化时广播
@@ -462,6 +499,9 @@ func (r *Room) OnStateChange() {
 		Type:        common.ServerCmdChangeState,
 		ChangeState: &common.RoomState{Type: r.GetState().ToClientState(chartID).Type, ChartID: chartID},
 	})
+
+	// 广播房间状态更新
+	BroadcastRoomUpdate(r)
 }
 
 // logGameEnd 输出游戏结束信息

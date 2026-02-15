@@ -129,7 +129,11 @@ func (s *Session) handleDisconnect() {
 
 	s.server.RemoveSession(s.ID)
 	if s.User != nil {
-		s.User.Dangle()
+		// 只有当前会话还是用户的活跃会话时，才调用 Dangle
+		// 这避免了旧会话在用户重连后错误地触发 Dangle
+		if s.User.GetSession() == s {
+			s.User.Dangle()
+		}
 	}
 	s.Stop()
 }
@@ -694,6 +698,9 @@ func (s *Session) handleLockRoom(lock bool) error {
 		Lock: lock,
 	})
 
+	// 广播房间状态更新
+	BroadcastRoomUpdate(room)
+
 	return s.Send(common.ServerCommand{
 		Type:           common.ServerCmdLockRoom,
 		LockRoomResult: &common.Result[struct{}]{Ok: &struct{}{}},
@@ -722,6 +729,9 @@ func (s *Session) handleCycleRoom(cycle bool) error {
 		Type:  common.MsgCycleRoom,
 		Cycle: cycle,
 	})
+
+	// 广播房间状态更新
+	BroadcastRoomUpdate(room)
 
 	return s.Send(common.ServerCommand{
 		Type:            common.ServerCmdCycleRoom,
@@ -804,6 +814,10 @@ func (s *Session) handleReady() error {
 		Type: common.MsgReady,
 		User: s.User.ID,
 	})
+
+	// 广播房间状态更新
+	BroadcastRoomUpdate(room)
+
 	room.CheckAllReady()
 
 	return s.Send(common.ServerCommand{
@@ -856,6 +870,9 @@ func (s *Session) handleCancelReady() error {
 			Type: common.MsgCancelReady,
 			User: s.User.ID,
 		})
+
+		// 广播房间状态更新
+		BroadcastRoomUpdate(room)
 	}
 
 	return s.Send(common.ServerCommand{

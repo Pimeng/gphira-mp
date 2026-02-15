@@ -56,19 +56,11 @@ func main() {
 			// 其他情况（包括具体IPv6地址）
 			address = fmt.Sprintf("%s:%d", config.Host, config.Port)
 		}
-		
+
 		if err := srv.Start(address); err != nil {
 			log.Fatalf("服务器错误: %v", err)
 		}
 	}()
-
-	// 格式化显示地址
-	displayAddr := config.Host
-	if config.Host == "" {
-		displayAddr = "0.0.0.0"
-	}
-	log.Printf("Phira-MP 服务器已启动，地址: %s:%d", displayAddr, config.Port)
-	log.Println("按 Ctrl+C 停止服务器")
 
 	// 等待信号
 	<-sigChan

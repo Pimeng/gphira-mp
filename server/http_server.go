@@ -89,6 +89,9 @@ func (h *HTTPServer) Start() error {
 
 	mux := http.NewServeMux()
 
+	// WebSocket接口
+	mux.HandleFunc("/ws", h.HandleWebSocket)
+
 	// 公共接口
 	mux.HandleFunc("/room", h.handleRoomList)
 

@@ -144,6 +144,29 @@ func (m *OTPManager) ValidateTempToken(token, clientIP string) bool {
 	return true
 }
 
+// ValidateTempTokenNoIP 验证临时token（不验证IP，用于WebSocket）
+func (m *OTPManager) ValidateTempTokenNoIP(token string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	info, ok := m.tempTokens[token]
+	if !ok {
+		return false
+	}
+
+	// 检查是否被封禁
+	if info.Banned {
+		return false
+	}
+
+	// 检查是否过期
+	if time.Now().After(info.ExpiresAt) {
+		return false
+	}
+
+	return true
+}
+
 // RevokeTempToken 撤销临时token
 func (m *OTPManager) RevokeTempToken(token string) {
 	m.mu.Lock()

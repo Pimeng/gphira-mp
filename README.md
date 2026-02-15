@@ -107,6 +107,51 @@ log_level: info
 
 我们实现了很多使用的API，具体请参考：[API 文档](docs/api.md)
 
+## WebSocket 支持
+
+服务器提供 WebSocket 支持，用于实时推送房间状态更新和公屏消息。详细文档请参考：[WebSocket API 文档](websocket.md)
+
+### 快速开始
+
+1. 启用 HTTP 服务（WebSocket 复用 HTTP 端口）：
+
+```yaml
+# server_config.yml
+http_service: true
+http_port: 12347
+```
+
+2. 连接到 WebSocket：
+
+```javascript
+const ws = new WebSocket('ws://localhost:12347/ws');
+
+ws.onopen = () => {
+  // 订阅房间
+  ws.send(JSON.stringify({
+    type: 'subscribe',
+    roomId: 'test-room'
+  }));
+};
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  console.log('收到消息:', message);
+};
+```
+
+3. 查看示例代码：
+   - HTML/JavaScript 示例：`examples/websocket_client.html`
+   - Python 示例：`examples/websocket_client.py`
+
+### 主要功能
+
+- 实时房间状态更新（玩家加入/离开、游戏状态变化等）
+- 房间日志推送（INFO 级别）
+- 管理员监控（订阅所有房间状态）
+- 自动心跳保持连接
+- 支持多客户端同时订阅
+
 ## 与 Rust 原版的差异
 
 1. **并发模型**: Go 使用 goroutine + channel，Rust 使用 tokio
