@@ -11,24 +11,24 @@ on:
 
 jobs:
   build:
-    name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
-          - goos: linux
+          - runner: ubuntu-latest
             goarch: amd64
             artifact: phira-mp-server-linux-x64
-          - goos: linux
+          - runner: ubuntu-24.04-arm
             goarch: arm64
             artifact: phira-mp-server-linux-arm64
-          - goos: windows
+          - runner: windows-latest
             goarch: amd64
             artifact: phira-mp-server-windows-x64.exe
-          - goos: darwin
+          - runner: macos-13
             goarch: amd64
             artifact: phira-mp-server-macos-x64
-          - goos: darwin
+          - runner: macos-latest
             goarch: arm64
             artifact: phira-mp-server-macos-arm64
 
@@ -45,7 +45,6 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: 0
-          GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: go build -ldflags "-s -w" -o ${{ matrix.artifact }} ./cmd/server/main.go
 
