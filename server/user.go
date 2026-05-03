@@ -201,39 +201,77 @@ func (u *User) HandleDangleTimeout() {
 	}
 }
 
-// UserInfoFromAPI 从API获取用户信息
+// UserInfoFromAPI 从API获取用户信息（带缓存和指数回退重试）
 func UserInfoFromAPI(token string) (*User, *common.ClientRoomState, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", Host+"/me", nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("authentication failed")
+	// 命中缓存时直接复用，避免重复请求
+	if id, name, lang, ok := globalAuthCache.get(token); ok {
+		log.Printf("Token缓存命中，复用用户信息 (id=%d, name=%s)", id, name)
+		return &User{
+			ID:   id,
+			Name: name,
+			Lang: lang,
+		}, nil, nil
 	}
 
-	var userInfo struct {
-		ID       int32  `json:"id"`
-		Name     string `json:"name"`
-		Language string `json:"language"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
-		return nil, nil, err
+	// 未命中缓存，带指数回退地请求API
+	const maxRetries = 3
+	backoff := 500 * time.Millisecond
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("Token认证第 %d 次重试（回退 %v）: %v", attempt, backoff, lastErr)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+
+		req, err := http.NewRequest("GET", Host+"/me", nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			// 认证失败（4xx）不重试，直接返回错误；服务端错误（5xx）继续重试
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return nil, nil, fmt.Errorf("authentication failed")
+			}
+			lastErr = fmt.Errorf("server error: %d", resp.StatusCode)
+			continue
+		}
+
+		var userInfo struct {
+			ID       int32  `json:"id"`
+			Name     string `json:"name"`
+			Language string `json:"language"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&userInfo)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// 写入缓存
+		globalAuthCache.set(token, userInfo.ID, userInfo.Name, userInfo.Language)
+
+		return &User{
+			ID:   userInfo.ID,
+			Name: userInfo.Name,
+			Lang: userInfo.Language,
+		}, nil, nil
 	}
 
-	return &User{
-		ID:   userInfo.ID,
-		Name: userInfo.Name,
-		Lang: userInfo.Language,
-	}, nil, nil
+	return nil, nil, fmt.Errorf("authentication failed after %d retries: %w", maxRetries, lastErr)
 }
 
 // FetchChart 从API获取谱面信息
