@@ -23,6 +23,9 @@ type CLI struct {
 	stopServer   func() error
 	kickUserFn   func(int32) bool
 
+	restartServer func() error
+	updateState   func() *state.ServerState
+
 	scanner *bufio.Scanner
 	stop    chan struct{}
 	wg      sync.WaitGroup
@@ -30,16 +33,18 @@ type CLI struct {
 }
 
 // NewCLI creates a new CLI instance.
-func NewCLI(state *state.ServerState, logger *utils.Logger, broadcastAll func(protocol.ServerCommand) error, stopServer func() error, kickUser func(int32) bool) *CLI {
+func NewCLI(state *state.ServerState, logger *utils.Logger, broadcastAll func(protocol.ServerCommand) error, stopServer func() error, kickUser func(int32) bool, restartServer func() error, updateState func() *state.ServerState) *CLI {
 	return &CLI{
-		state:        state,
-		logger:       logger,
-		broadcastAll: broadcastAll,
-		stopServer:   stopServer,
-		kickUserFn:   kickUser,
-		scanner:      bufio.NewScanner(os.Stdin),
-		stop:         make(chan struct{}),
-		done:         make(chan struct{}),
+		state:         state,
+		logger:        logger,
+		broadcastAll:  broadcastAll,
+		stopServer:    stopServer,
+		kickUserFn:    kickUser,
+		restartServer: restartServer,
+		updateState:   updateState,
+		scanner:       bufio.NewScanner(os.Stdin),
+		stop:          make(chan struct{}),
+		done:          make(chan struct{}),
 	}
 }
 
@@ -92,6 +97,18 @@ func (c *CLI) run() {
 			c.broadcast(args)
 		case "contest":
 			c.handleContest(args)
+		case "restart", "r":
+			fmt.Println(c.state.ServerLang.Format("cli-restarting-server", nil))
+			if c.restartServer != nil {
+				if err := c.restartServer(); err != nil {
+					fmt.Println(c.state.ServerLang.Format("cli-restart-failed", map[string]string{"err": err.Error()}))
+				} else {
+					if c.updateState != nil {
+						c.state = c.updateState()
+					}
+					fmt.Println(c.state.ServerLang.Format("cli-restarted", nil))
+				}
+			}
 		case "stop", "exit", "quit":
 			fmt.Println(c.state.ServerLang.Format("cli-stopping-server", nil))
 			if c.stopServer != nil {

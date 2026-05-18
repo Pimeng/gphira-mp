@@ -52,6 +52,7 @@ log-server-info=服务端昵称：{ $name } ，日志等级{ $level }
 log-http-started=HTTP 服务已启动 { $addr }
 log-redis-enabled=Redis 缓存已启用
 log-shutting-down=正在关闭服务端
+log-restarting-server=正在重启 GPhira MP 服务端
 cli-welcome=欢迎使用 GPhira MP CLI. 输入 "help" 获取命令列表
 
 # 缺失的已有 key
@@ -141,6 +142,9 @@ log-host-changed=房间 { $room } 房主从 { $oldHost } 变更为 { $newHost }
 # cli.go
 cli-unknown-command=未知命令：{ $cmd }。输入 "help" 获取可用命令列表。
 cli-stopping-server=正在停止服务端...
+cli-restarting-server=正在重启服务端...
+cli-restart-failed=重启失败：{ $err }
+cli-restarted=服务端已重启
 cli-no-active-rooms=没有活跃房间。
 cli-no-online-users=没有在线用户。
 cli-usage-kick=用法：kick <用户ID>
@@ -191,4 +195,5 @@ cli-help=可用命令：
                            更新比赛白名单
   contest <room> start [force]
                            手动开始比赛
+  restart, r               重启服务端
   stop, exit, quit         停止服务端

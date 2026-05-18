@@ -52,6 +52,7 @@ log-server-info=Server name: { $name }, log level: { $level }
 log-http-started=HTTP service started on { $addr }
 log-redis-enabled=Redis cache enabled
 log-shutting-down=Shutting down server
+log-restarting-server=Restarting GPhira MP server
 cli-welcome=Welcome to GPhira MP CLI. Type "help" for available commands.
 
 # Missing existing keys
@@ -141,6 +142,9 @@ log-host-changed=Host changed from { $oldHost } to { $newHost } in room { $room 
 # cli.go
 cli-unknown-command=Unknown command: { $cmd }. Type 'help' for available commands.
 cli-stopping-server=Stopping server...
+cli-restarting-server=Restarting server...
+cli-restart-failed=Restart failed: { $err }
+cli-restarted=Server restarted
 cli-no-active-rooms=No active rooms.
 cli-no-online-users=No online users.
 cli-usage-kick=Usage: kick <user-id>
@@ -191,4 +195,5 @@ cli-help=Available commands:
                            Update contest whitelist
   contest <room> start [force]
                            Manually start a contest game
+  restart, r               Restart the server
   stop, exit, quit         Stop the server

@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-//go:embed zh-CN.ftl
+//go:embed lang/zh-CN.ftl
 var defaultZhCN string
 
-//go:embed en-US.ftl
+//go:embed lang/en-US.ftl
 var defaultEnUS string
 
 // Language represents a language instance for localization.
@@ -52,10 +52,17 @@ func loadTranslations(lang string) map[string]string {
 	dict := parseDict(base)
 
 	// 2. Overlay external file (if present) on top of defaults
-	extPath := filepath.Join("l10n", lang+".ftl")
-	if data, err := os.ReadFile(extPath); err == nil {
-		for k, v := range parseDict(string(data)) {
-			dict[k] = v
+	cwd, _ := os.Getwd()
+	for dir := cwd; dir != ""; dir = filepath.Dir(dir) {
+		extPath := filepath.Join(dir, "l10n", lang+".ftl")
+		if data, err := os.ReadFile(extPath); err == nil {
+			for k, v := range parseDict(string(data)) {
+				dict[k] = v
+			}
+			break
+		}
+		if filepath.Dir(dir) == dir {
+			break
 		}
 	}
 
