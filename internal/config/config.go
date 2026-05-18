@@ -14,26 +14,26 @@ type ServerConfig struct {
 	ServerName       string             `yaml:"SERVER_NAME"`
 	Host             string             `yaml:"HOST"`
 	Port             int                `yaml:"PORT"`
-	HTTPService      bool               `yaml:"HTTP_SERVICE"`
+	HTTPService      *bool              `yaml:"HTTP_SERVICE"`
 	HTTPPort         int                `yaml:"HTTP_PORT"`
 	RoomMaxUsers     int                `yaml:"ROOM_MAX_USERS"`
-	ChatEnabled      bool               `yaml:"CHAT_ENABLED"`
-	ReplayEnabled    bool               `yaml:"REPLAY_ENABLED"`
+	ChatEnabled      *bool              `yaml:"CHAT_ENABLED"`
+	ReplayEnabled    *bool              `yaml:"REPLAY_ENABLED"`
 	ReplayBaseDir    string             `yaml:"REPLAY_BASE_DIR"`
-	ReplayAutoUpload bool               `yaml:"REPLAY_AUTO_UPLOAD"`
+	ReplayAutoUpload *bool              `yaml:"REPLAY_AUTO_UPLOAD"`
 	AdminToken       string             `yaml:"ADMIN_TOKEN"`
 	AdminDataPath    string             `yaml:"ADMIN_DATA_PATH"`
 	RoomListTip      string             `yaml:"ROOM_LIST_TIP"`
 	LogLevel         string             `yaml:"LOG_LEVEL"`
 	RealIPHeader     string             `yaml:"REAL_IP_HEADER"`
-	HAProxyProtocol  bool               `yaml:"HAPROXY_PROTOCOL"`
+	HAProxyProtocol  *bool              `yaml:"HAPROXY_PROTOCOL"`
 	Lang             string             `yaml:"LANG"`
 	PhiraAPIEndpoint string             `yaml:"PHIRA_API_ENDPOINT"`
 	OutboundProxy    string             `yaml:"OUTBOUND_PROXY"`
 	ShareStation     *ShareStationConfig `yaml:"SHARE_STATION"`
 	Redis            *RedisConfig       `yaml:"REDIS"`
 	HitokotoAPIURL      string             `yaml:"HITOKOTO_API_URL"`
-	RoomCreationEnabled bool               `yaml:"ROOM_CREATION_ENABLED"`
+	RoomCreationEnabled *bool              `yaml:"ROOM_CREATION_ENABLED"`
 }
 
 // ShareStationConfig holds share station settings.
@@ -59,20 +59,20 @@ func DefaultConfig() *ServerConfig {
 		ServerName:       "Phira MP",
 		Host:             "::",
 		Port:             12346,
-		HTTPService:      false,
+		HTTPService:      Bool(false),
 		HTTPPort:         12347,
 		RoomMaxUsers:     12,
-		ChatEnabled:      true,
-		RoomCreationEnabled: true,
-		ReplayEnabled:    false,
+		ChatEnabled:      Bool(true),
+		RoomCreationEnabled: Bool(true),
+		ReplayEnabled:    Bool(false),
 		ReplayBaseDir:    "./record",
-		ReplayAutoUpload: false,
+		ReplayAutoUpload: Bool(false),
 		AdminToken:       "",
 		AdminDataPath:    "./admin_data.json",
 		RoomListTip:      "",
 		LogLevel:         "INFO",
 		RealIPHeader:     "X-Forwarded-For",
-		HAProxyProtocol:  false,
+		HAProxyProtocol:  Bool(false),
 		Lang:             "zh-CN",
 		PhiraAPIEndpoint: "https://phira.5wyxi.com",
 		OutboundProxy:    "",
@@ -86,6 +86,19 @@ func DefaultConfig() *ServerConfig {
 		},
 		HitokotoAPIURL: "https://v1.hitokoto.cn/",
 	}
+}
+
+// Bool returns a pointer to the given bool value.
+func Bool(v bool) *bool {
+	return &v
+}
+
+// DerefBool returns the value of a *bool, or the default if nil.
+func DerefBool(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // ParseBool parses a boolean value from various formats.
@@ -261,7 +274,7 @@ func loadEnvConfigInternal() *ServerConfig {
 		cfg.Port = v
 	}
 	if v, ok := ParseBool(os.Getenv("HTTP_SERVICE")); ok {
-		cfg.HTTPService = v
+		cfg.HTTPService = &v
 	}
 	if v, ok := ParsePort(os.Getenv("HTTP_PORT")); ok {
 		cfg.HTTPPort = v
@@ -270,16 +283,16 @@ func loadEnvConfigInternal() *ServerConfig {
 		cfg.RoomMaxUsers = v
 	}
 	if v, ok := ParseBool(os.Getenv("CHAT_ENABLED")); ok {
-		cfg.ChatEnabled = v
+		cfg.ChatEnabled = &v
 	}
 	if v, ok := ParseBool(os.Getenv("REPLAY_ENABLED")); ok {
-		cfg.ReplayEnabled = v
+		cfg.ReplayEnabled = &v
 	}
 	if v, ok := ParseString(os.Getenv("REPLAY_BASE_DIR")); ok {
 		cfg.ReplayBaseDir = v
 	}
 	if v, ok := ParseBool(os.Getenv("REPLAY_AUTO_UPLOAD")); ok {
-		cfg.ReplayAutoUpload = v
+		cfg.ReplayAutoUpload = &v
 	}
 	if v, ok := ParseString(os.Getenv("ADMIN_TOKEN")); ok {
 		cfg.AdminToken = v
@@ -297,7 +310,7 @@ func loadEnvConfigInternal() *ServerConfig {
 		cfg.RealIPHeader = v
 	}
 	if v, ok := ParseBool(os.Getenv("HAPROXY_PROTOCOL")); ok {
-		cfg.HAProxyProtocol = v
+		cfg.HAProxyProtocol = &v
 	}
 	if v, ok := ParseString(getEnvLang()); ok {
 		cfg.Lang = v
@@ -315,7 +328,7 @@ func loadEnvConfigInternal() *ServerConfig {
 		cfg.Redis = r
 	}
 	if v, ok := ParseBool(os.Getenv("ROOM_CREATION_ENABLED")); ok {
-		cfg.RoomCreationEnabled = v
+		cfg.RoomCreationEnabled = &v
 	}
 	if v, ok := ParseString(os.Getenv("HITOKOTO_API_URL")); ok {
 		cfg.HitokotoAPIURL = v

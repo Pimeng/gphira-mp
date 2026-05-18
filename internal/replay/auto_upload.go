@@ -26,7 +26,7 @@ func CreateAutoUploadHandler(
 	uploadConfigs *utils.AutoUploadConfigs,
 ) AutoUploadCallback {
 	return func(userID int32, chartID int32, timestamp int64, recordID int32) {
-		if !cfg.ReplayAutoUpload {
+		if !config.DerefBool(cfg.ReplayAutoUpload, false) {
 			if logger != nil {
 				logger.Debug("Auto upload skipped: REPLAY_AUTO_UPLOAD disabled")
 			}
@@ -41,7 +41,7 @@ func CreateAutoUploadHandler(
 
 		// Delay 30s before uploading
 		time.AfterFunc(30*time.Second, func() {
-			if !cfg.ReplayAutoUpload {
+			if !config.DerefBool(cfg.ReplayAutoUpload, false) {
 				return
 			}
 

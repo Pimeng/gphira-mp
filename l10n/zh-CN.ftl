@@ -92,6 +92,7 @@ log-user-reconnected=用户重连：会话={ $session }，用户={ $user }，房
 log-user-authenticated=用户认证成功：会话={ $session }，用户={ $user }，ID={ $id }
 log-auth-restored-room=认证恢复房间：会话={ $session }，用户={ $user }，房间={ $room }
 log-heartbeat-timeout=心跳超时：会话={ $session }，用户={ $user }
+log-stream-closed=流已关闭：会话={ $session }，用户={ $user }
 log-session-marked-lost=会话标记为丢失：会话={ $session }，用户={ $user }，保留房间={ $preserveRoom }
 log-banned-user-disconnected=封禁用户断开连接：会话={ $session }，用户={ $user }，名称={ $name }
 log-user-disconnected-playing=用户游戏中断开：会话={ $session }，用户={ $user }，名称={ $name }，房间={ $room }

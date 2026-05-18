@@ -51,7 +51,7 @@ func LoadConfig(path string) (*ServerConfig, error) {
 	}
 	if v, ok := raw["HTTP_SERVICE"]; ok {
 		if val, ok := parseBoolFromInterface(v); ok {
-			cfg.HTTPService = val
+			cfg.HTTPService = &val
 		}
 	}
 	if v, ok := raw["HTTP_PORT"]; ok {
@@ -66,17 +66,17 @@ func LoadConfig(path string) (*ServerConfig, error) {
 	}
 	if v, ok := raw["ROOM_CREATION_ENABLED"]; ok {
 		if val, ok := parseBoolFromInterface(v); ok {
-			cfg.RoomCreationEnabled = val
+			cfg.RoomCreationEnabled = &val
 		}
 	}
 	if v, ok := raw["CHAT_ENABLED"]; ok {
 		if val, ok := parseBoolFromInterface(v); ok {
-			cfg.ChatEnabled = val
+			cfg.ChatEnabled = &val
 		}
 	}
 	if v, ok := raw["REPLAY_ENABLED"]; ok {
 		if val, ok := parseBoolFromInterface(v); ok {
-			cfg.ReplayEnabled = val
+			cfg.ReplayEnabled = &val
 		}
 	}
 	if v, ok := raw["REPLAY_BASE_DIR"]; ok {
@@ -86,7 +86,7 @@ func LoadConfig(path string) (*ServerConfig, error) {
 	}
 	if v, ok := raw["REPLAY_AUTO_UPLOAD"]; ok {
 		if val, ok := parseBoolFromInterface(v); ok {
-			cfg.ReplayAutoUpload = val
+			cfg.ReplayAutoUpload = &val
 		}
 	}
 	if v, ok := raw["ADMIN_TOKEN"]; ok {
@@ -116,7 +116,7 @@ func LoadConfig(path string) (*ServerConfig, error) {
 	}
 	if v, ok := raw["HAPROXY_PROTOCOL"]; ok {
 		if val, ok := parseBoolFromInterface(v); ok {
-			cfg.HAProxyProtocol = val
+			cfg.HAProxyProtocol = &val
 		}
 	}
 	if v, ok := raw["LANG"]; ok {
@@ -237,17 +237,26 @@ func MergeConfig(base, override *ServerConfig) *ServerConfig {
 		merged.Redis = &r
 	}
 
-	// For bool fields, we copy them unconditionally because we cannot distinguish
-	// "unset" from "explicitly false" in a sparse override config. Callers should
-	// ensure that override configs only set bools that are explicitly intended to
-	// override the base (e.g., from LoadEnvConfig which only sets bools when the
-	// corresponding environment variable is present).
-	merged.HTTPService = override.HTTPService
-	merged.ChatEnabled = override.ChatEnabled
-	merged.ReplayEnabled = override.ReplayEnabled
-	merged.ReplayAutoUpload = override.ReplayAutoUpload
-	merged.HAProxyProtocol = override.HAProxyProtocol
-	merged.RoomCreationEnabled = override.RoomCreationEnabled
+	// For bool fields, only override when the override value is non-nil,
+	// which indicates the field was explicitly set.
+	if override.HTTPService != nil {
+		merged.HTTPService = override.HTTPService
+	}
+	if override.ChatEnabled != nil {
+		merged.ChatEnabled = override.ChatEnabled
+	}
+	if override.ReplayEnabled != nil {
+		merged.ReplayEnabled = override.ReplayEnabled
+	}
+	if override.ReplayAutoUpload != nil {
+		merged.ReplayAutoUpload = override.ReplayAutoUpload
+	}
+	if override.HAProxyProtocol != nil {
+		merged.HAProxyProtocol = override.HAProxyProtocol
+	}
+	if override.RoomCreationEnabled != nil {
+		merged.RoomCreationEnabled = override.RoomCreationEnabled
+	}
 
 	return merged
 }

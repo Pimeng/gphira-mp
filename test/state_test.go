@@ -40,7 +40,7 @@ func TestApplyConfig(t *testing.T) {
 	newCfg := &config.ServerConfig{
 		ServerName:    "New",
 		Lang:          "en-US",
-		ReplayEnabled: true,
+		ReplayEnabled: config.Bool(true),
 	}
 	s.ApplyConfig(newCfg)
 

@@ -76,7 +76,7 @@ func main() {
 				}
 			case "httpService":
 				if v, ok := config.ParseBool(strings.TrimSpace(*cliHTTPService)); ok {
-					cfg.HTTPService = v
+					cfg.HTTPService = &v
 				} else {
 					cliErrors = append(cliErrors, "invalid httpService: must be true/false/1/0/yes/no/on/off")
 				}

@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 
+	"github.com/Pimeng/gphira-mp-next/internal/config"
 	"github.com/Pimeng/gphira-mp-next/internal/game"
 	"github.com/Pimeng/gphira-mp-next/internal/state"
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
@@ -52,7 +53,7 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 			st.Logger.DebugL(st.ServerLang, "log-chat", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID), "content": cmd.Message})
 		}
 		content := cmd.Message
-		if !st.Config.ChatEnabled {
+		if !config.DerefBool(st.Config.ChatEnabled, true) {
 			content = st.ServerLang.Format("chat-disabled-by-server", nil)
 		}
 		_ = ctx.BroadcastRoomMessage(room, protocol.Message{Type: protocol.MessageChat, User: user.ID, Content: content})

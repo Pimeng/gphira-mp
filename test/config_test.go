@@ -20,10 +20,10 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.RoomMaxUsers != 12 {
 		t.Errorf("default room max users = %d, want 12", cfg.RoomMaxUsers)
 	}
-	if !cfg.RoomCreationEnabled {
+	if cfg.RoomCreationEnabled == nil || !*cfg.RoomCreationEnabled {
 		t.Error("room creation should be enabled by default")
 	}
-	if !cfg.ChatEnabled {
+	if cfg.ChatEnabled == nil || !*cfg.ChatEnabled {
 		t.Error("chat should be enabled by default")
 	}
 	if len(cfg.Monitors) != 1 || cfg.Monitors[0] != 2 {
@@ -56,7 +56,7 @@ MONITORS:
 	if cfg.ServerName != "Test Server" {
 		t.Errorf("server name = %q, want Test Server", cfg.ServerName)
 	}
-	if cfg.ChatEnabled {
+	if config.DerefBool(cfg.ChatEnabled, true) {
 		t.Error("chat should be disabled")
 	}
 	if len(cfg.Monitors) != 2 {
@@ -65,8 +65,8 @@ MONITORS:
 }
 
 func TestMergeConfig(t *testing.T) {
-	base := &config.ServerConfig{Port: 12346, ServerName: "Base", ChatEnabled: true}
-	override := &config.ServerConfig{Port: 9999, ChatEnabled: false}
+	base := &config.ServerConfig{Port: 12346, ServerName: "Base", ChatEnabled: config.Bool(true)}
+	override := &config.ServerConfig{Port: 9999, ChatEnabled: config.Bool(false)}
 
 	merged := config.MergeConfig(base, override)
 	if merged.Port != 9999 {
@@ -75,7 +75,7 @@ func TestMergeConfig(t *testing.T) {
 	if merged.ServerName != "Base" {
 		t.Errorf("server name = %q, want Base", merged.ServerName)
 	}
-	if merged.ChatEnabled {
+	if config.DerefBool(merged.ChatEnabled, true) {
 		t.Error("chat should be overridden to false")
 	}
 }
@@ -280,7 +280,7 @@ REDIS:
 	if cfg.Port != 8888 {
 		t.Errorf("port = %d, want 8888", cfg.Port)
 	}
-	if !cfg.HTTPService {
+	if !config.DerefBool(cfg.HTTPService, false) {
 		t.Error("HTTP_SERVICE should be true")
 	}
 	if cfg.HTTPPort != 8889 {
@@ -289,19 +289,19 @@ REDIS:
 	if cfg.RoomMaxUsers != 8 {
 		t.Errorf("room max users = %d, want 8", cfg.RoomMaxUsers)
 	}
-	if cfg.RoomCreationEnabled {
+	if config.DerefBool(cfg.RoomCreationEnabled, true) {
 		t.Error("ROOM_CREATION_ENABLED should be false")
 	}
-	if cfg.ChatEnabled {
+	if config.DerefBool(cfg.ChatEnabled, true) {
 		t.Error("CHAT_ENABLED should be false")
 	}
-	if !cfg.ReplayEnabled {
+	if !config.DerefBool(cfg.ReplayEnabled, false) {
 		t.Error("REPLAY_ENABLED should be true")
 	}
 	if cfg.ReplayBaseDir != "/tmp/record" {
 		t.Errorf("replay base dir = %q, want /tmp/record", cfg.ReplayBaseDir)
 	}
-	if !cfg.ReplayAutoUpload {
+	if !config.DerefBool(cfg.ReplayAutoUpload, false) {
 		t.Error("REPLAY_AUTO_UPLOAD should be true")
 	}
 	if cfg.AdminToken != "secret" {
@@ -319,7 +319,7 @@ REDIS:
 	if cfg.RealIPHeader != "X-Real-IP" {
 		t.Errorf("real ip header = %q, want X-Real-IP", cfg.RealIPHeader)
 	}
-	if !cfg.HAProxyProtocol {
+	if !config.DerefBool(cfg.HAProxyProtocol, false) {
 		t.Error("HAPROXY_PROTOCOL should be true")
 	}
 	if cfg.Lang != "en-US" {
@@ -412,7 +412,7 @@ func TestLoadEnvConfig(t *testing.T) {
 	if cfg.Port != 7777 {
 		t.Errorf("port = %d", cfg.Port)
 	}
-	if !cfg.HTTPService {
+	if !config.DerefBool(cfg.HTTPService, false) {
 		t.Error("HTTP_SERVICE should be true")
 	}
 	if cfg.HTTPPort != 7778 {
@@ -421,19 +421,19 @@ func TestLoadEnvConfig(t *testing.T) {
 	if cfg.RoomMaxUsers != 6 {
 		t.Errorf("room max users = %d", cfg.RoomMaxUsers)
 	}
-	if cfg.RoomCreationEnabled {
+	if config.DerefBool(cfg.RoomCreationEnabled, true) {
 		t.Error("ROOM_CREATION_ENABLED should be false")
 	}
-	if cfg.ChatEnabled {
+	if config.DerefBool(cfg.ChatEnabled, true) {
 		t.Error("CHAT_ENABLED should be false")
 	}
-	if !cfg.ReplayEnabled {
+	if !config.DerefBool(cfg.ReplayEnabled, false) {
 		t.Error("REPLAY_ENABLED should be true")
 	}
 	if cfg.ReplayBaseDir != "/env/record" {
 		t.Errorf("replay base dir = %q", cfg.ReplayBaseDir)
 	}
-	if !cfg.ReplayAutoUpload {
+	if !config.DerefBool(cfg.ReplayAutoUpload, false) {
 		t.Error("REPLAY_AUTO_UPLOAD should be true")
 	}
 	if cfg.AdminToken != "env-token" {
@@ -451,7 +451,7 @@ func TestLoadEnvConfig(t *testing.T) {
 	if cfg.RealIPHeader != "X-Env-IP" {
 		t.Errorf("real ip header = %q", cfg.RealIPHeader)
 	}
-	if !cfg.HAProxyProtocol {
+	if !config.DerefBool(cfg.HAProxyProtocol, false) {
 		t.Error("HAPROXY_PROTOCOL should be true")
 	}
 	if cfg.Lang != "ja-JP" {
@@ -508,30 +508,30 @@ func TestMergeConfigNilCases(t *testing.T) {
 func TestMergeConfigBoolFields(t *testing.T) {
 	base := config.DefaultConfig()
 	override := &config.ServerConfig{}
-	override.HTTPService = true
-	override.ChatEnabled = false
-	override.ReplayEnabled = true
-	override.ReplayAutoUpload = true
-	override.HAProxyProtocol = true
-	override.RoomCreationEnabled = false
+	override.HTTPService = config.Bool(true)
+	override.ChatEnabled = config.Bool(false)
+	override.ReplayEnabled = config.Bool(true)
+	override.ReplayAutoUpload = config.Bool(true)
+	override.HAProxyProtocol = config.Bool(true)
+	override.RoomCreationEnabled = config.Bool(false)
 
 	merged := config.MergeConfig(base, override)
-	if !merged.HTTPService {
+	if !config.DerefBool(merged.HTTPService, false) {
 		t.Error("HTTPService should be true")
 	}
-	if merged.ChatEnabled {
+	if config.DerefBool(merged.ChatEnabled, true) {
 		t.Error("ChatEnabled should be false")
 	}
-	if !merged.ReplayEnabled {
+	if !config.DerefBool(merged.ReplayEnabled, false) {
 		t.Error("ReplayEnabled should be true")
 	}
-	if !merged.ReplayAutoUpload {
+	if !config.DerefBool(merged.ReplayAutoUpload, false) {
 		t.Error("ReplayAutoUpload should be true")
 	}
-	if !merged.HAProxyProtocol {
+	if !config.DerefBool(merged.HAProxyProtocol, false) {
 		t.Error("HAProxyProtocol should be true")
 	}
-	if merged.RoomCreationEnabled {
+	if config.DerefBool(merged.RoomCreationEnabled, true) {
 		t.Error("RoomCreationEnabled should be false")
 	}
 }

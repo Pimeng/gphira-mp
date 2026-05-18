@@ -173,6 +173,7 @@ func fetchHitokoto(proxy, url string) (*HitokotoValue, error) {
 	}
 
 	quote := strings.TrimSpace(result.Hitokoto)
+	quote = strings.ReplaceAll(quote, `\n`, "\n")
 	if quote == "" {
 		return nil, nil
 	}

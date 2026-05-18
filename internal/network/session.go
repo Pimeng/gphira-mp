@@ -459,6 +459,15 @@ func (s *Session) CheckHeartbeat(now time.Time) {
 		s.mu.Unlock()
 		return
 	}
+	// If the underlying stream is already closed (e.g. client killed process,
+	// network dropped, or TCP RST), mark lost immediately instead of waiting
+	// for the heartbeat timeout.
+	if s.stream != nil && s.stream.IsClosed() {
+		s.mu.Unlock()
+		s.State.Logger.DebugL(s.State.ServerLang, "log-stream-closed", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
+		s.markLost()
+		return
+	}
 	if now.Sub(s.lastRecv) > heartbeatDisconnectTimeoutMs*time.Millisecond {
 		s.mu.Unlock()
 		s.State.Logger.DebugL(s.State.ServerLang, "log-heartbeat-timeout", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
@@ -542,7 +551,11 @@ func (s *Session) markLost() {
 
 	// Normal disconnect: mark dangling, keep room association.
 	user.MarkDangle()
-	s.State.Logger.DebugL(s.State.ServerLang, "log-user-dangling", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(user.Room.ID)})
+	roomID := ""
+	if user.Room != nil {
+		roomID = string(user.Room.ID)
+	}
+	s.State.Logger.DebugL(s.State.ServerLang, "log-user-dangling", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": roomID})
 	s.scheduleDangleCleanup(user)
 }
 

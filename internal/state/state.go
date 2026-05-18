@@ -59,8 +59,8 @@ func NewServerState(cfg *config.ServerConfig, logger *utils.Logger, serverName, 
 		Rooms:               make(map[roomid.RoomID]*game.Room),
 		BannedUsers:         make(map[int32]struct{}),
 		BannedRoomUsers:     make(map[roomid.RoomID]map[int32]struct{}),
-		RoomCreationEnabled: cfg.RoomCreationEnabled,
-		ReplayEnabled:       cfg.ReplayEnabled,
+		RoomCreationEnabled: config.DerefBool(cfg.RoomCreationEnabled, true),
+		ReplayEnabled:       config.DerefBool(cfg.ReplayEnabled, false),
 		ChartCache:          utils.NewChartCache(200, 60*time.Minute),
 		UploadedReplayMeta:  utils.NewUploadedReplayMeta(),
 		AutoUploadConfigs:   utils.NewAutoUploadConfigs(),
@@ -81,8 +81,8 @@ func (s *ServerState) ApplyConfig(cfg *config.ServerConfig) {
 		s.ServerName = "Phira MP"
 	}
 	s.ServerLang = l10n.New(cfg.Lang)
-	s.ReplayEnabled = cfg.ReplayEnabled
-	s.RoomCreationEnabled = cfg.RoomCreationEnabled
+	s.ReplayEnabled = config.DerefBool(cfg.ReplayEnabled, false)
+	s.RoomCreationEnabled = config.DerefBool(cfg.RoomCreationEnabled, true)
 	if s.Logger != nil {
 		s.Logger.DebugL(s.ServerLang, "log-config-applied", map[string]string{"serverName": s.ServerName, "lang": cfg.Lang, "replay": fmt.Sprintf("%v", s.ReplayEnabled), "roomCreation": fmt.Sprintf("%v", s.RoomCreationEnabled)})
 	}

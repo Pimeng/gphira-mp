@@ -92,6 +92,7 @@ log-user-reconnected=User reconnected: session={ $session }, user={ $user }, roo
 log-user-authenticated=User authenticated: session={ $session }, user={ $user }, id={ $id }
 log-auth-restored-room=Auth restored room: session={ $session }, user={ $user }, room={ $room }
 log-heartbeat-timeout=Heartbeat timeout: session={ $session }, user={ $user }
+log-stream-closed=Stream closed: session={ $session }, user={ $user }
 log-session-marked-lost=Session marked lost: session={ $session }, user={ $user }, preserve_room={ $preserveRoom }
 log-banned-user-disconnected=Banned user disconnected: session={ $session }, user={ $user }, name={ $name }
 log-user-disconnected-playing=User disconnected while playing: session={ $session }, user={ $user }, name={ $name }, room={ $room }

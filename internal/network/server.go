@@ -51,7 +51,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 		sessions:    make(map[string]*Session),
 	}
 
-	if cfg.ReplayEnabled {
+	if config.DerefBool(cfg.ReplayEnabled, false) {
 		s.state.ReplayRecorder = replay.NewRecorder(cfg.ReplayBaseDir, logger)
 		s.replayCleanup = replay.StartReplayCleanup(cfg.ReplayBaseDir, 4)
 		s.state.AutoUploadCallback = replay.CreateAutoUploadHandler(cfg, logger, s.state.UploadedReplayMeta, s.state.AutoUploadConfigs)
@@ -64,7 +64,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 	go s.acceptLoop()
 	go s.heartbeatLoop()
 
-	if cfg.HTTPService {
+	if config.DerefBool(cfg.HTTPService, false) {
 		httpAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.HTTPPort))
 		httpServer, err := StartHTTPServer(httpAddr, s.state, logger)
 		if err != nil {
@@ -126,7 +126,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	remoteIP := conn.RemoteAddr().String()
 
 	// HAProxy PROXY Protocol
-	if s.cfg.HAProxyProtocol {
+	if config.DerefBool(s.cfg.HAProxyProtocol, false) {
 		info, wrappedConn, err := ParseProxyProtocol(conn, 5*time.Second)
 		if err != nil {
 			s.logger.WarnL(s.state.ServerLang, "log-proxy-protocol-failed", map[string]string{"err": err.Error()}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
