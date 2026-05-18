@@ -5,9 +5,9 @@
 *.dll
 *.so
 *.dylib
-server
-bench
-gphira-mp
+/server
+/bench
+/gphira-mp
 
 # Test binary, built with `go test -c`
 *.test
