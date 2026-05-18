@@ -136,9 +136,15 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 		if st.Logger != nil {
 			st.Logger.DebugL(st.ServerLang, "log-leave-room", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
 		}
+		participantIDs := room.AllParticipantIDs()
 		shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 			Broadcast: func(cmd protocol.ServerCommand) error {
-				return ctx.BroadcastRoom(room, cmd)
+				for _, id := range participantIDs {
+					if u := ctx.findUser(id); u != nil {
+						_ = u.TrySend(cmd)
+					}
+				}
+				return nil
 			},
 			UsersById: func(id int32) *game.User {
 				return ctx.findUser(id)

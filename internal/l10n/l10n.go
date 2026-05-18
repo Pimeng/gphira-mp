@@ -100,15 +100,12 @@ func (l *Language) Format(key string, args map[string]string) string {
 	if !ok {
 		return key
 	}
-	if len(args) == 0 {
-		return tmpl
-	}
 	result := tmpl
 	for k, v := range args {
 		result = strings.ReplaceAll(result, "{ $"+k+" }", v)
 		result = strings.ReplaceAll(result, "{$"+k+"}", v)
 	}
-	return result
+	return strings.ReplaceAll(result, "\\n", "\n")
 }
 
 // TL is a shorthand for translating a key with the given language and arguments.

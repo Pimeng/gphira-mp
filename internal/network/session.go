@@ -348,12 +348,15 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 		},
 		CheckRoomAllReady: func(room *game.Room) {
 			users := s.collectUsers()
+			participantIDs := room.AllParticipantIDs()
+			userIDs := room.UserIDs()
+			monitorIDs := room.MonitorIDs()
 			_ = room.CheckAllReady(&game.RoomCallbacks{
 				UsersById: func(id int32) *game.User {
 					return users[id]
 				},
 				Broadcast: func(cmd protocol.ServerCommand) error {
-					for _, id := range room.AllParticipantIDs() {
+					for _, id := range participantIDs {
 						if u := users[id]; u != nil {
 							_ = u.TrySend(cmd)
 						}
@@ -361,7 +364,7 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 					return nil
 				},
 				BroadcastToMonitors: func(cmd protocol.ServerCommand) {
-					for _, id := range room.MonitorIDs() {
+					for _, id := range monitorIDs {
 						if u := users[id]; u != nil {
 							_ = u.TrySend(cmd)
 						}
@@ -373,7 +376,7 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 				OnEnterPlaying: func(r *game.Room) {
 					if s.State.ReplayEnabled && s.State.ReplayRecorder != nil && r.ReplayEligible {
 						var participants []replay.Participant
-						for _, uid := range r.UserIDs() {
+						for _, uid := range userIDs {
 							name := ""
 							if u := users[uid]; u != nil {
 								name = u.Name
@@ -566,9 +569,10 @@ func (s *Session) handleUserLeaveAndRemove(user *game.User) {
 	s.State.Logger.DebugL(s.State.ServerLang, "log-user-leave-remove", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
 	if user.Room != nil {
 		room := user.Room
+		participantIDs := room.AllParticipantIDs()
 		shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 			Broadcast: func(cmd protocol.ServerCommand) error {
-				for _, id := range room.AllParticipantIDs() {
+				for _, id := range participantIDs {
 					if u := s.findUser(id); u != nil {
 						_ = u.TrySend(cmd)
 					}
@@ -614,9 +618,10 @@ func (s *Session) scheduleDangleCleanup(user *game.User) {
 		if dangleRoom != nil {
 			room := dangleRoom
 			s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-leaving", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+			participantIDs := room.AllParticipantIDs()
 			shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 				Broadcast: func(cmd protocol.ServerCommand) error {
-					for _, id := range room.AllParticipantIDs() {
+					for _, id := range participantIDs {
 						if u := s.findUser(id); u != nil {
 							_ = u.TrySend(cmd)
 						}

@@ -33,6 +33,7 @@ type WSServer struct {
 	mu       sync.RWMutex
 	clients  map[*WSClient]struct{}
 	rooms    map[roomid.RoomID]map[*WSClient]struct{}
+	admins   map[*WSClient]struct{}
 	register chan *WSClient
 	leave    chan *WSClient
 	broadcast chan wsBroadcastMsg
@@ -51,6 +52,7 @@ func NewWSServer(state *HTTPServer) *WSServer {
 		state:     state,
 		clients:   make(map[*WSClient]struct{}),
 		rooms:     make(map[roomid.RoomID]map[*WSClient]struct{}),
+		admins:    make(map[*WSClient]struct{}),
 		register:  make(chan *WSClient),
 		leave:     make(chan *WSClient),
 		broadcast: make(chan wsBroadcastMsg, 64),
@@ -133,9 +135,20 @@ func (s *WSServer) run() {
 		case msg := <-s.broadcast:
 			s.mu.RLock()
 			subs := s.rooms[msg.roomID]
+			if len(subs) == 0 && len(s.admins) == 0 {
+				s.mu.RUnlock()
+				continue
+			}
 			payload, _ := json.Marshal(map[string]any{"type": msg.msgType, "data": msg.data})
 			count := 0
 			for client := range subs {
+				select {
+				case client.send <- payload:
+					count++
+				default:
+				}
+			}
+			for client := range s.admins {
 				select {
 				case client.send <- payload:
 					count++
@@ -155,6 +168,7 @@ func (s *WSServer) run() {
 			}
 			s.clients = make(map[*WSClient]struct{})
 			s.rooms = make(map[roomid.RoomID]map[*WSClient]struct{})
+			s.admins = make(map[*WSClient]struct{})
 			s.mu.Unlock()
 			return
 		}
@@ -169,6 +183,9 @@ func (s *WSServer) removeClient(client *WSClient) {
 		return
 	}
 	delete(s.clients, client)
+	if client.isAdmin {
+		delete(s.admins, client)
+	}
 	if client.roomID != "" {
 		if subs := s.rooms[client.roomID]; subs != nil {
 			delete(subs, client)
@@ -299,6 +316,9 @@ func (c *WSClient) readPump() {
 				continue
 			}
 			c.isAdmin = true
+			c.server.mu.Lock()
+			c.server.admins[c] = struct{}{}
+			c.server.mu.Unlock()
 			c.sendJSON(map[string]any{"type": "admin_subscribed"})
 		}
 	}
