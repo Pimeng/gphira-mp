@@ -1,0 +1,103 @@
+# 监听地址
+HOST: "::"
+# 监听端口
+PORT: 12346
+
+# 是否启用 HTTP 服务
+HTTP_SERVICE: false
+# HTTP 服务监听端口
+HTTP_PORT: 12347
+
+# 日志等级：DEBUG、INFO、MARK、WARN、ERROR，默认 INFO
+LOG_LEVEL: INFO
+
+# 服务端语言：zh-CN、en-US，影响日志/CLI/HTTP 默认输出语言
+# 优先级：ENV PHIRA_MP_LANG > ENV LANG > 此项 > 默认（zh-CN）
+LANG: zh-CN
+
+# 真实 IP 头名称，用于反向代理场景，默认 X-Forwarded-For
+# 可选值例如：X-Forwarded-For、X-Real-IP、CF-Connecting-IP
+# 注意：这里只对 HTTP 服务生效
+REAL_IP_HEADER: X-Forwarded-For
+
+# 是否启用 HAProxy PROXY Protocol 支持
+# 注意：用于 TCP 代理场景下获取真实 IP
+HAPROXY_PROTOCOL: false
+
+# 单房间最大用户数
+ROOM_MAX_USERS: 12
+
+# 是否允许创建房间，默认 true
+ROOM_CREATION_ENABLED: true
+
+# 是否启用聊天，默认开启；关闭后玩家聊天会替换为安全提示
+CHAT_ENABLED: true
+
+# 是否启用回放录制功能，默认关闭
+# 启用后，对局会自动录制为 .phirarec 文件
+# 可通过 API /admin/replay/config 动态开关
+REPLAY_ENABLED: false
+# 回放录制目录，默认 ./record
+# REPLAY_BASE_DIR: "./record"
+
+# 是否启用游戏结束后自动上传回放到分享站，默认 false
+# 仅当同时配置了 SHARE_STATION 时实际生效
+# 关闭后，即使用户在客户端开启了自动上传偏好，服务端也不会执行上传
+REPLAY_AUTO_UPLOAD: false
+
+# 观战用户 ID
+MONITORS:
+  - 2
+
+# 测试账号 ID 列表：配置后，这些账号的日志默认不写入文件
+# 默认值：[1739989]
+TEST_ACCOUNT_IDS:
+  - 1739989
+
+# 服务器名称，会显示在欢迎信息中
+SERVER_NAME: Phira MP
+
+# 管理接口鉴权 token（HTTP /admin/*）
+# ADMIN_TOKEN: "replace_me"
+
+# 管理数据持久化路径（JSON）
+# ADMIN_DATA_PATH: "./admin_data.json"
+
+# 登录后房间列表后追加显示的提示文案
+# ROOM_LIST_TIP: "欢迎加入交流群：123456；查房间：example.com"
+
+# Phira API 端点地址，用于用户认证、获取谱面、获取成绩记录等
+# 默认：https://phira.5wyxi.com
+PHIRA_API_ENDPOINT: "https://phira.5wyxi.com"
+
+# 一言 API 地址，用于欢迎消息中的随机句子
+HITOKOTO_API_URL: "https://v1.hitokoto.cn/"
+
+# 服务端出站代理配置
+# 不配置：保持当前环境里的默认代理行为
+# false / False：强制直连，不走代理
+# http(s)://... / socks://...：强制使用指定代理
+# OUTBOUND_PROXY: false
+# OUTBOUND_PROXY: "http://127.0.0.1:7890"
+
+# Phira Replay 分享站配置（用于上传回放到分享站）
+SHARE_STATION:
+  # 分享站地址
+  URL: "http://183.66.27.19:40004"
+  # 服务端认证 token（用于自动上传等内部接口）
+  # 如需Token，请访问 https://rymc.ltd/e 询问 Evidence 相关Token事宜
+  TOKEN: "your_share_station_token_here"
+
+# Redis 缓存配置
+# 启用后，所有本地缓存（谱面缓存、一言缓存等）将迁移到 Redis，不再使用本地内存和磁盘缓存
+REDIS:
+  # 是否启用 Redis 缓存，默认 false
+  ENABLED: false
+  # Redis 服务器地址
+  HOST: "127.0.0.1"
+  # Redis 服务器端口
+  PORT: 6379
+  # Redis 认证密码（如无密码可留空或注释）
+  # PASSWORD: "your_redis_password"
+  # Redis 数据库号，默认 0
+  DB: 0

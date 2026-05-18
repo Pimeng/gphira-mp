@@ -1,0 +1,452 @@
+// Package protocol implements the Phira MP custom binary protocol.
+package protocol
+
+import (
+	"encoding/binary"
+	"errors"
+	"math"
+
+	"github.com/Pimeng/gphira-mp-next/pkg/half"
+)
+
+var (
+	ErrUnexpectedEOF   = errors.New("binary-unexpected-eof")
+	ErrLengthTooLarge  = errors.New("binary-length-too-large")
+	ErrStringTooLong   = errors.New("binary-string-too-long")
+)
+
+// BinaryReader reads typed data from a byte slice.
+type BinaryReader struct {
+	buf    []byte
+	offset int
+}
+
+// NewBinaryReader creates a new reader.
+func NewBinaryReader(buf []byte) *BinaryReader {
+	return &BinaryReader{buf: buf}
+}
+
+func (r *BinaryReader) ensure(n int) {
+	if r.offset+n > len(r.buf) {
+		panic(ErrUnexpectedEOF)
+	}
+}
+
+// Take returns n bytes and advances the offset.
+func (r *BinaryReader) Take(n int) []byte {
+	r.ensure(n)
+	out := r.buf[r.offset : r.offset+n]
+	r.offset += n
+	return out
+}
+
+// ReadU8 reads an unsigned 8-bit integer.
+func (r *BinaryReader) ReadU8() uint8 {
+	r.ensure(1)
+	v := r.buf[r.offset]
+	r.offset++
+	return v
+}
+
+// ReadI8 reads a signed 8-bit integer.
+func (r *BinaryReader) ReadI8() int8 {
+	return int8(r.ReadU8())
+}
+
+// ReadBool reads a boolean.
+func (r *BinaryReader) ReadBool() bool {
+	return r.ReadU8() == 1
+}
+
+// ReadU16 reads an unsigned 16-bit integer (little endian).
+func (r *BinaryReader) ReadU16() uint16 {
+	r.ensure(2)
+	v := binary.LittleEndian.Uint16(r.buf[r.offset:])
+	r.offset += 2
+	return v
+}
+
+// ReadU32 reads an unsigned 32-bit integer (little endian).
+func (r *BinaryReader) ReadU32() uint32 {
+	r.ensure(4)
+	v := binary.LittleEndian.Uint32(r.buf[r.offset:])
+	r.offset += 4
+	return v
+}
+
+// ReadI32 reads a signed 32-bit integer (little endian).
+func (r *BinaryReader) ReadI32() int32 {
+	return int32(r.ReadU32())
+}
+
+// ReadU64 reads an unsigned 64-bit integer (little endian).
+func (r *BinaryReader) ReadU64() uint64 {
+	r.ensure(8)
+	v := binary.LittleEndian.Uint64(r.buf[r.offset:])
+	r.offset += 8
+	return v
+}
+
+// ReadI64 reads a signed 64-bit integer (little endian).
+func (r *BinaryReader) ReadI64() int64 {
+	return int64(r.ReadU64())
+}
+
+// ReadF32 reads a 32-bit float (little endian).
+func (r *BinaryReader) ReadF32() float32 {
+	v := r.ReadU32()
+	return math.Float32frombits(v)
+}
+
+// ReadUlebBigInt reads an unsigned LEB128 integer as uint64.
+func (r *BinaryReader) ReadUlebBigInt() uint64 {
+	var result uint64
+	var shift uint
+	for {
+		b := r.ReadU8()
+		result |= uint64(b&0x7f) << shift
+		if b&0x80 == 0 {
+			return result
+		}
+		shift += 7
+	}
+}
+
+// ReadUlebNumber reads an unsigned LEB128 integer as int.
+func (r *BinaryReader) ReadUlebNumber() int {
+	v := r.ReadUlebBigInt()
+	if v > math.MaxInt32 {
+		panic(ErrLengthTooLarge)
+	}
+	return int(v)
+}
+
+// ReadString reads a UTF-8 string (LEB128 length prefix).
+func (r *BinaryReader) ReadString() string {
+	len := r.ReadUlebNumber()
+	return string(r.Take(len))
+}
+
+// ReadVarchar reads a UTF-8 string with max length check.
+func (r *BinaryReader) ReadVarchar(maxLen int) string {
+	len := r.ReadUlebNumber()
+	if len > maxLen {
+		panic(ErrStringTooLong)
+	}
+	return string(r.Take(len))
+}
+
+// ReadOption reads an optional value.
+func ReadOption[T any](r *BinaryReader, decode func(*BinaryReader) T) *T {
+	if r.ReadBool() {
+		v := decode(r)
+		return &v
+	}
+	return nil
+}
+
+// ReadResult reads a Result<T, string>.
+func ReadResult[T any](r *BinaryReader, decodeOk func(*BinaryReader) T) StringResult[T] {
+	if r.ReadBool() {
+		return StringResult[T]{Ok: true, Value: decodeOk(r)}
+	}
+	errStr := r.ReadString()
+	return StringResult[T]{Ok: false, Error: errStr}
+}
+
+// ReadArray reads an array of T.
+func ReadArray[T any](r *BinaryReader, decode func(*BinaryReader) T) []T {
+	n := r.ReadUlebNumber()
+	out := make([]T, n)
+	for i := 0; i < n; i++ {
+		out[i] = decode(r)
+	}
+	return out
+}
+
+// ReadMap reads a map[K]V.
+func ReadMap[K comparable, V any](r *BinaryReader, decodeK func(*BinaryReader) K, decodeV func(*BinaryReader) V) map[K]V {
+	n := r.ReadUlebNumber()
+	out := make(map[K]V, n)
+	for i := 0; i < n; i++ {
+		k := decodeK(r)
+		v := decodeV(r)
+		out[k] = v
+	}
+	return out
+}
+
+// ReadUUID reads a UUID encoded as two uint64 (low, high).
+func (r *BinaryReader) ReadUUID() string {
+	low := r.ReadU64()
+	high := r.ReadU64()
+	return u64PairToUUID(high, low)
+}
+
+// ReadCompactPos reads a compact position (two float16 values).
+func (r *BinaryReader) ReadCompactPos() CompactPos {
+	xBits := r.ReadU16()
+	yBits := r.ReadU16()
+	return CompactPos{
+		X: half.F16BitsToF32(xBits),
+		Y: half.F16BitsToF32(yBits),
+	}
+}
+
+// Offset returns the current read offset.
+func (r *BinaryReader) Offset() int {
+	return r.offset
+}
+
+// ---------------------------------------------------------------------------
+// BinaryWriter
+// ---------------------------------------------------------------------------
+
+// BinaryWriter writes typed data to a growing buffer.
+type BinaryWriter struct {
+	buf []byte
+}
+
+// NewBinaryWriter creates a new writer.
+func NewBinaryWriter() *BinaryWriter {
+	return &BinaryWriter{}
+}
+
+// Bytes returns the written data.
+func (w *BinaryWriter) Bytes() []byte {
+	return w.buf
+}
+
+// WriteBuffer appends raw bytes.
+func (w *BinaryWriter) WriteBuffer(data []byte) {
+	w.buf = append(w.buf, data...)
+}
+
+// WriteU8 writes an unsigned 8-bit integer.
+func (w *BinaryWriter) WriteU8(v uint8) {
+	w.buf = append(w.buf, v)
+}
+
+// WriteI8 writes a signed 8-bit integer.
+func (w *BinaryWriter) WriteI8(v int8) {
+	w.WriteU8(uint8(v))
+}
+
+// WriteBool writes a boolean.
+func (w *BinaryWriter) WriteBool(v bool) {
+	if v {
+		w.WriteU8(1)
+	} else {
+		w.WriteU8(0)
+	}
+}
+
+// WriteU16 writes an unsigned 16-bit integer (little endian).
+func (w *BinaryWriter) WriteU16(v uint16) {
+	b := make([]byte, 2)
+	binary.LittleEndian.PutUint16(b, v)
+	w.buf = append(w.buf, b...)
+}
+
+// WriteU32 writes an unsigned 32-bit integer (little endian).
+func (w *BinaryWriter) WriteU32(v uint32) {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, v)
+	w.buf = append(w.buf, b...)
+}
+
+// WriteI32 writes a signed 32-bit integer (little endian).
+func (w *BinaryWriter) WriteI32(v int32) {
+	w.WriteU32(uint32(v))
+}
+
+// WriteU64 writes an unsigned 64-bit integer (little endian).
+func (w *BinaryWriter) WriteU64(v uint64) {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, v)
+	w.buf = append(w.buf, b...)
+}
+
+// WriteI64 writes a signed 64-bit integer (little endian).
+func (w *BinaryWriter) WriteI64(v int64) {
+	w.WriteU64(uint64(v))
+}
+
+// WriteF32 writes a 32-bit float (little endian).
+func (w *BinaryWriter) WriteF32(v float32) {
+	w.WriteU32(math.Float32bits(v))
+}
+
+// WriteUleb writes an unsigned LEB128 integer.
+func (w *BinaryWriter) WriteUleb(v uint64) {
+	for {
+		byteVal := uint8(v & 0x7f)
+		v >>= 7
+		if v != 0 {
+			byteVal |= 0x80
+		}
+		w.WriteU8(byteVal)
+		if v == 0 {
+			return
+		}
+	}
+}
+
+// WriteString writes a UTF-8 string (LEB128 length prefix).
+func (w *BinaryWriter) WriteString(s string) {
+	b := []byte(s)
+	w.WriteUleb(uint64(len(b)))
+	w.buf = append(w.buf, b...)
+}
+
+// WriteVarchar writes a UTF-8 string with max length check.
+func (w *BinaryWriter) WriteVarchar(maxLen int, s string) {
+	b := []byte(s)
+	if len(b) > maxLen {
+		panic(ErrStringTooLong)
+	}
+	w.WriteUleb(uint64(len(b)))
+	w.buf = append(w.buf, b...)
+}
+
+// WriteOption writes an optional value.
+func WriteOption[T any](w *BinaryWriter, v *T, encode func(*BinaryWriter, T)) {
+	if v == nil {
+		w.WriteBool(false)
+		return
+	}
+	w.WriteBool(true)
+	encode(w, *v)
+}
+
+// WriteResult writes a Result<T, string>.
+func WriteResult[T any](w *BinaryWriter, v StringResult[T], encodeOk func(*BinaryWriter, T)) {
+	if v.Ok {
+		w.WriteBool(true)
+		encodeOk(w, v.Value)
+	} else {
+		w.WriteBool(false)
+		w.WriteString(v.Error)
+	}
+}
+
+// WriteArray writes an array of T.
+func WriteArray[T any](w *BinaryWriter, arr []T, encode func(*BinaryWriter, T)) {
+	w.WriteUleb(uint64(len(arr)))
+	for _, it := range arr {
+		encode(w, it)
+	}
+}
+
+// WriteMap writes a map[K]V.
+func WriteMap[K comparable, V any](w *BinaryWriter, m map[K]V, encodeK func(*BinaryWriter, K), encodeV func(*BinaryWriter, V)) {
+	w.WriteUleb(uint64(len(m)))
+	for k, v := range m {
+		encodeK(w, k)
+		encodeV(w, v)
+	}
+}
+
+// WriteUUID writes a UUID as two uint64 (low, high).
+func (w *BinaryWriter) WriteUUID(uuid string) {
+	high, low := uuidToU64Pair(uuid)
+	w.WriteU64(low)
+	w.WriteU64(high)
+}
+
+// WriteCompactPos writes a compact position (two float16 values).
+func (w *BinaryWriter) WriteCompactPos(pos CompactPos) {
+	w.WriteU16(half.F32ToF16Bits(pos.X))
+	w.WriteU16(half.F32ToF16Bits(pos.Y))
+}
+
+// ---------------------------------------------------------------------------
+// StringResult
+// ---------------------------------------------------------------------------
+
+// StringResult is a Rust-style Result with string error type.
+type StringResult[T any] struct {
+	Ok    bool
+	Value T
+	Error string
+}
+
+// Ok creates a success result.
+func Ok[T any](value T) StringResult[T] {
+	return StringResult[T]{Ok: true, Value: value}
+}
+
+// Err creates an error result.
+func Err[T any](err string) StringResult[T] {
+	return StringResult[T]{Ok: false, Error: err}
+}
+
+// ---------------------------------------------------------------------------
+// UUID helpers
+// ---------------------------------------------------------------------------
+
+func uuidToU64Pair(uuid string) (high, low uint64) {
+	// Parse standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	// We need 16 bytes. Simple parser assuming valid format.
+	var b [16]byte
+	j := 0
+	for i := 0; i < len(uuid) && j < 16; i++ {
+		c := uuid[i]
+		if c == '-' {
+			continue
+		}
+		var nibble byte
+		if c >= '0' && c <= '9' {
+			nibble = c - '0'
+		} else if c >= 'a' && c <= 'f' {
+			nibble = c - 'a' + 10
+		} else if c >= 'A' && c <= 'F' {
+			nibble = c - 'A' + 10
+		} else {
+			continue
+		}
+		if j%2 == 0 {
+			b[j/2] = nibble << 4
+		} else {
+			b[j/2] |= nibble
+		}
+		j++
+	}
+	// high = first 8 bytes, low = last 8 bytes (big endian within each half)
+	for i := 0; i < 8; i++ {
+		high = (high << 8) | uint64(b[i])
+	}
+	for i := 8; i < 16; i++ {
+		low = (low << 8) | uint64(b[i])
+	}
+	return
+}
+
+func u64PairToUUID(high, low uint64) string {
+	var b [16]byte
+	for i := 7; i >= 0; i-- {
+		b[i] = byte(high & 0xff)
+		high >>= 8
+	}
+	for i := 15; i >= 8; i-- {
+		b[i] = byte(low & 0xff)
+		low >>= 8
+	}
+	// Format as xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	const hex = "0123456789abcdef"
+	var out [36]byte
+	out[8] = '-'
+	out[13] = '-'
+	out[18] = '-'
+	out[23] = '-'
+	idx := 0
+	for i := 0; i < 16; i++ {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			idx++ // skip dash
+		}
+		out[idx] = hex[b[i]>>4]
+		out[idx+1] = hex[b[i]&0x0f]
+		idx += 2
+	}
+	return string(out[:])
+}

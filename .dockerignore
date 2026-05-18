@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+
+# Documentation
+*.md
+docs/
+
+# Test files
+test/
+*_test.go
+
+# Local data
+data/
+logs/
+record/
+*.log
+
+# Build artifacts
+gphira-mp
+*.exe
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# TS project (if present)
+tphira-mp-main/

@@ -1,0 +1,42 @@
+services:
+  gphira-mp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: ghcr.io/pimeng/gphira-mp-next:latest
+    container_name: gphira-mp
+    restart: unless-stopped
+    ports:
+      - "12346:12346"
+      - "12347:12347"
+    environment:
+      - HOST=::
+      - PORT=12346
+      - HTTP_SERVICE=true
+      - HTTP_PORT=12347
+      - LOG_LEVEL=INFO
+      - SERVER_NAME=Phira MP
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./record:/app/record
+      - ./config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:12347/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Redis cache backend
+  redis:
+    image: redis:7-alpine
+    container_name: gphira-mp-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

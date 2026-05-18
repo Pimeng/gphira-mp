@@ -1,0 +1,221 @@
+name: 手动构建
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号（例如 1.2.3，留空则使用 git 标签）"
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "标记为预发布版本"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: 下载依赖
+        run: go mod download
+
+      - name: 运行测试
+        run: go test ./...
+
+  build:
+    needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+          - os: darwin
+            arch: amd64
+            runner: macos-latest
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+          - os: freebsd
+            arch: amd64
+            runner: ubuntu-latest
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: 下载依赖
+        run: go mod download
+
+      - name: 构建二进制文件
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        shell: bash
+        run: |
+          INPUT_VERSION="${{ inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="$(git describe --tags --always --dirty)"
+            VERSION="${VERSION#v}"
+          fi
+          ldflags="-s -w -X github.com/Pimeng/gphira-mp-next/internal/version.version=${VERSION}"
+
+          ext=""
+          if [ "${GOOS}" = "windows" ]; then
+            ext=".exe"
+          fi
+
+          mkdir -p build/dist
+          go build -ldflags="${ldflags}" -o "build/dist/gphira-mp${ext}" ./cmd/server
+          go build -ldflags="${ldflags}" -o "build/dist/bench${ext}" ./cmd/bench
+
+      - name: 复制附加文件
+        shell: bash
+        run: |
+          cp -r locales build/dist/locales || true
+          cp docker/entrypoint.sh build/dist/ || true
+          cp docker/Dockerfile build/dist/ || true
+          cp docker-compose.yml build/dist/ || true
+
+      - name: 制作压缩包（Unix）
+        if: matrix.os != 'windows'
+        shell: bash
+        run: |
+          cd build/dist
+          zip -r "../../gphira-mp-${{ matrix.os }}-${{ matrix.arch }}.zip" .
+
+      - name: 制作压缩包（Windows）
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\dist\* -DestinationPath "gphira-mp-${{ matrix.os }}-${{ matrix.arch }}.zip"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: gphira-mp-${{ matrix.os }}-${{ matrix.arch }}
+          path: gphira-mp-${{ matrix.os }}-${{ matrix.arch }}.zip
+
+  release:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: gphira-mp-*
+
+      - name: 确定版本号
+        id: version
+        shell: bash
+        run: |
+          INPUT="${{ inputs.version }}"
+          if [ -n "$INPUT" ]; then
+            echo "version=$INPUT" >> "$GITHUB_OUTPUT"
+          else
+            TAG="$(git describe --tags --always)"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          files: artifacts/**/*.zip
+          prerelease: ${{ inputs.prerelease }}
+          make_latest: ${{ !inputs.prerelease }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    needs: [test, build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 确定版本号
+        id: version
+        shell: bash
+        run: |
+          INPUT="${{ inputs.version }}"
+          if [ -n "$INPUT" ]; then
+            VERSION="$INPUT"
+          else
+            TAG="$(git describe --tags --always)"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: 生成镜像标签
+        id: meta
+        run: |
+          REPO="${GITHUB_REPOSITORY,,}"
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v${VERSION}"
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            echo "tags=ghcr.io/${REPO}:${TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=ghcr.io/${REPO}:${TAG},ghcr.io/${REPO}:latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 构建并推送 Docker 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            PHIRA_MP_VERSION=${{ steps.version.outputs.version }}
