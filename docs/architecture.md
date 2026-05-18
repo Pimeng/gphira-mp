@@ -26,7 +26,7 @@ This document describes the overall architecture and core components of the Phir
 │   ├── roomid/              # Room ID validation
 │   └── stream/              # Framed TCP stream with batching and fast path
 ├── test/                    # Unit and integration tests
-├── locales/                 # Localization files (.ftl)
+├── l10n/                    # Localization files (.ftl)
 │   ├── zh-CN.ftl
 │   └── en-US.ftl
 ├── docs/                    # Documentation
@@ -144,9 +144,12 @@ SelectChart -> WaitingForReady -> Playing -> SelectChart
 
 ### 8. Localization (`internal/l10n`)
 
-- Fluent (.ftl) format
-- Languages: zh-CN, en-US (extensible)
-- Server-wide default + per-user language
+- **Format**: Simple `key=value` text files with `.ftl` extension
+- **Languages**: `zh-CN`, `en-US` (extensible)
+- **Loading strategy** (two-tier fallback):
+  1. **External file first**: Runtime reads from `l10n/{lang}.ftl` relative to working directory
+  2. **Embedded fallback**: If external file is missing, uses built-in defaults compiled into the binary via `//go:embed`
+- This allows hot-editing translations without recompiling, while keeping the binary self-contained
 
 ## Data Flow
 

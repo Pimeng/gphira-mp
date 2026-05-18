@@ -93,6 +93,27 @@ Every config option has a corresponding environment variable with the same name:
 | `REDIS_PASSWORD` | string | *(empty)* |
 | `REDIS_DB` | int | `0` |
 
+### Language & Localization
+
+The `LANG` setting controls the server-side language for logs, CLI output, and system messages.
+
+**Supported values:** `zh-CN`, `en-US`
+
+**How it works:**
+1. At startup, the server looks for an external language file at `l10n/{LANG}.ftl` (relative to the working directory).
+2. If the file exists, translations are loaded from it — you can edit these files directly without recompiling.
+3. If the file is missing, the server falls back to built-in defaults embedded in the binary.
+
+**Customizing translations:**
+```bash
+# Edit or add translation keys
+cat l10n/zh-CN.ftl
+# log-server-starting=正在启动 GPhira MP 服务端
+# cli-welcome=欢迎使用 GPhira MP CLI
+```
+
+To add a new language, create `l10n/xx-XX.ftl` and set `LANG: xx-XX` in your config.
+
 ### Outbound Proxy
 
 The `OUTBOUND_PROXY` setting accepts:
