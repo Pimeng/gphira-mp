@@ -19,7 +19,7 @@ import (
 
 func main() {
 	var configPath string
-	flag.StringVar(&configPath, "config", "config.yaml", "path to configuration file")
+	flag.StringVar(&configPath, "config", "", "path to configuration file")
 
 	// CLI flags that map to config values
 	var (
@@ -33,6 +33,15 @@ func main() {
 	)
 
 	flag.Parse()
+
+	// Auto-discover config file if not explicitly specified
+	if configPath == "" {
+		if _, err := os.Stat("server_config.yml"); err == nil {
+			configPath = "server_config.yml"
+		} else {
+			configPath = "config.yaml"
+		}
+	}
 
 	// Build configuration with priority: defaults < file < environment < CLI
 	cfg := config.DefaultConfig()

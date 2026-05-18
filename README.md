@@ -12,7 +12,7 @@ Phira MP 服务器的 **Go 重写版**，提供更小的部署体积、更高的
 - **协议**: 自定义二进制协议（LEB128 帧头，最大 2MiB 负载）
 - **网络**: TCP 游戏服 + HTTP API + WebSocket 推送
 - **缓存**: 内存 LRU + 可选 Redis 后端
-- **构建**: 标准 Go 工具链，静态编译，无运行时依赖
+- **构建**: Makefile / make.bat 统一构建，自动嵌入版本号，静态编译无运行时依赖
 
 ---
 
@@ -47,24 +47,32 @@ cd gphira-mp-next
 # 下载依赖
 go mod download
 
-# 构建服务端
-go build -o gphira-mp ./cmd/server
+# Linux / macOS
+make server        # 编译服务端
+make bench         # 编译压测工具
+make build         # 同时编译 server + bench
 
-# 构建压测工具
-go build -o bench ./cmd/bench
+# Windows
+make.bat server
+make.bat bench
+make.bat build
 ```
+
+编译产物输出到 `build/bin/` 目录。
 
 ### 运行
 
 ```bash
-# 使用默认配置启动
-./gphira-mp
+# Linux / macOS
+make run           # 编译并运行（使用 server_config.example.yml）
 
-# 指定配置文件
-./gphira-mp --config config.yaml
+# Windows
+make.bat run
 
-# 使用 CLI 参数覆盖
-./gphira-mp --port 12346 --httpService true --roomMaxUsers 12
+# 或直接运行已编译的二进制
+./build/bin/gphira-mp
+./build/bin/gphira-mp --config config.yaml
+./build/bin/gphira-mp --port 12346 --httpService true --roomMaxUsers 12
 ```
 
 ### 配置文件
@@ -147,7 +155,7 @@ docker run -d \
 │   └── stream/          # 带批处理的 TCP 流
 ├── test/                # 单元/集成测试
 ├── docs/                # 文档
-├── locales/             # 本地化文件 (.ftl)
+├── l10n/                # 本地化文件 (.ftl)
 └── docker/              # Docker 支持
 ```
 
@@ -156,10 +164,14 @@ docker run -d \
 ## 测试
 
 ```bash
-# 运行全部测试
-go test ./...
+# Linux / macOS
+make test
 
-# 运行特定测试
+# Windows
+make.bat test
+
+# 或直接使用 Go
+go test ./...
 go test ./test -run Contest -v
 ```
 
