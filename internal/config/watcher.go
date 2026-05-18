@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"sync"
 	"time"
 )
 
@@ -11,6 +12,7 @@ type Watcher struct {
 	interval time.Duration
 	onChange func()
 	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewWatcher creates a new config file watcher.
@@ -56,5 +58,7 @@ func (w *Watcher) run() {
 
 // Stop stops the watcher.
 func (w *Watcher) Stop() {
-	close(w.stop)
+	w.stopOnce.Do(func() {
+		close(w.stop)
+	})
 }

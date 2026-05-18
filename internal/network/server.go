@@ -58,7 +58,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 	}
 
 	if err := s.state.LoadAdminData(); err != nil {
-		logger.Warn("failed to load admin data", "err", err)
+		logger.WarnL(s.state.ServerLang, "log-admin-data-load-failed", map[string]string{"err": err.Error()})
 	}
 
 	go s.acceptLoop()
@@ -68,7 +68,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 		httpAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.HTTPPort))
 		httpServer, err := StartHTTPServer(httpAddr, s.state, logger)
 		if err != nil {
-			logger.Warn("failed to start http server", "err", err)
+			logger.WarnL(s.state.ServerLang, "log-http-start-failed", map[string]string{"err": err.Error()})
 		} else {
 			s.httpServer = httpServer
 		}
@@ -92,7 +92,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 				envCfg := config.LoadEnvConfig()
 				newCfg := config.MergeConfig(config.MergeConfig(config.DefaultConfig(), loaded), envCfg)
 				s.state.ApplyConfig(newCfg)
-				logger.Mark("config reloaded")
+				logger.MarkL(s.state.ServerLang, "log-config-reloaded", nil)
 			})
 			s.watcher.Start()
 		}
@@ -108,14 +108,15 @@ func (s *Server) acceptLoop() {
 			if s.isClosed() {
 				return
 			}
-			s.logger.Warn("accept failed", "err", err)
+			s.logger.WarnL(s.state.ServerLang, "log-accept-failed", map[string]string{"err": err.Error()})
 			continue
 		}
 		if !s.rateLimiter.Allow(conn.RemoteAddr().String()) {
-			s.logger.Warn("rate limit exceeded", "remote", conn.RemoteAddr().String(), &utils.LogContext{IP: conn.RemoteAddr().String(), IsConnectionLog: true})
+			s.logger.WarnL(s.state.ServerLang, "log-rate-limit-exceeded", map[string]string{"remote": conn.RemoteAddr().String()}, &utils.LogContext{IP: conn.RemoteAddr().String(), IsConnectionLog: true})
 			conn.Close()
 			continue
 		}
+		s.logger.DebugL(s.state.ServerLang, "log-connection-accepted", map[string]string{"remote": conn.RemoteAddr().String()})
 		go s.handleConn(conn)
 	}
 }
@@ -128,18 +129,18 @@ func (s *Server) handleConn(conn net.Conn) {
 	if s.cfg.HAProxyProtocol {
 		info, wrappedConn, err := ParseProxyProtocol(conn, 5*time.Second)
 		if err != nil {
-			s.logger.Warn("proxy protocol parse failed", "err", err, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+			s.logger.WarnL(s.state.ServerLang, "log-proxy-protocol-failed", map[string]string{"err": err.Error()}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 			conn.Close()
 			return
 		}
 		if info != nil {
 			remoteIP = fmt.Sprintf("%s:%d", info.SourceAddress, info.SourcePort)
-			s.logger.Debug("proxy protocol ok", "source", remoteIP, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+			s.logger.DebugL(s.state.ServerLang, "log-proxy-protocol-ok", map[string]string{"source": remoteIP}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 		}
 		conn = wrappedConn
 	}
 
-	s.logger.Debug("new connection", "id", id, "remote", remoteIP, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+	s.logger.DebugL(s.state.ServerLang, "log-new-connection", map[string]string{"id": id, "remote": remoteIP}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 
 	sess := NewSession(id, conn, s.state, remoteIP)
 
@@ -167,10 +168,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	strm, err := stream.New(conn, codec, sess.OnCommand, func(cmd protocol.ClientCommand) bool {
 		return cmd.Type == protocol.ClientCmdPing
 	}, func(phase string, err error) {
-		s.logger.Warn("stream error", "id", id, "phase", phase, "err", err, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+		s.logger.WarnL(s.state.ServerLang, "log-stream-error", map[string]string{"id": id, "phase": phase, "err": fmt.Sprintf("%v", err)}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 	})
 	if err != nil {
-		s.logger.Warn("handshake failed", "id", id, "err", err)
+		s.logger.WarnL(s.state.ServerLang, "log-handshake-failed", map[string]string{"id": id, "err": err.Error()})
 		conn.Close()
 		return
 	}
@@ -182,7 +183,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	s.state.Sessions[id] = sess
 	s.mu.Unlock()
 
-	s.logger.Debug("handshake ok", "id", id)
+	s.logger.DebugL(s.state.ServerLang, "log-handshake-ok", map[string]string{"id": id})
 }
 
 func (s *Server) heartbeatLoop() {
@@ -231,6 +232,10 @@ func (s *Server) BroadcastAll(cmd protocol.ServerCommand) {
 // Close gracefully shuts down the server.
 func (s *Server) Close() error {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
 	s.closed = true
 	for _, sess := range s.sessions {
 		sess.MarkLost()
@@ -238,7 +243,7 @@ func (s *Server) Close() error {
 	s.mu.Unlock()
 	if s.httpServer != nil {
 		if err := s.httpServer.Close(); err != nil {
-			s.logger.Warn("http server close error", "err", err)
+			s.logger.WarnL(s.state.ServerLang, "log-http-close-error", map[string]string{"err": err.Error()})
 		}
 	}
 	if s.watcher != nil {

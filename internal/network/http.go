@@ -75,6 +75,7 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	h.logger.Debug("http request", "path", "/room", "remote", r.RemoteAddr)
 
 	type playerInfo struct {
 		ID   int32  `json:"id"`
@@ -187,6 +188,7 @@ func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	h.logger.Debug("http request", "path", "/status", "remote", r.RemoteAddr)
 
 	var onlineCount int
 	var roomCount int
@@ -229,6 +231,7 @@ func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	h.logger.Debug("http request", "path", r.URL.Path, "remote", r.RemoteAddr)
 
 	prefix := "/chart/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {

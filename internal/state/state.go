@@ -83,6 +83,9 @@ func (s *ServerState) ApplyConfig(cfg *config.ServerConfig) {
 	s.ServerLang = l10n.New(cfg.Lang)
 	s.ReplayEnabled = cfg.ReplayEnabled
 	s.RoomCreationEnabled = cfg.RoomCreationEnabled
+	if s.Logger != nil {
+		s.Logger.DebugL(s.ServerLang, "log-config-applied", map[string]string{"serverName": s.ServerName, "lang": cfg.Lang, "replay": fmt.Sprintf("%v", s.ReplayEnabled), "roomCreation": fmt.Sprintf("%v", s.RoomCreationEnabled)})
+	}
 }
 
 func (s *ServerState) WithLock(fn func()) {
@@ -104,6 +107,9 @@ func (s *ServerState) LoadAdminData() error {
 	data, err := os.ReadFile(s.adminDataPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			if s.Logger != nil {
+				s.Logger.DebugL(s.ServerLang, "log-admin-data-not-found", map[string]string{"path": s.adminDataPath})
+			}
 			return nil
 		}
 		return err
@@ -120,6 +126,10 @@ func (s *ServerState) LoadAdminData() error {
 	s.BannedUsers = make(map[int32]struct{})
 	for _, id := range file.BannedUsers {
 		s.BannedUsers[id] = struct{}{}
+	}
+
+	if s.Logger != nil {
+		s.Logger.DebugL(s.ServerLang, "log-admin-data-loaded", map[string]string{"bannedUsers": fmt.Sprintf("%d", len(s.BannedUsers)), "bannedRoomUsers": fmt.Sprintf("%d", len(file.BannedRoomUsers))})
 	}
 
 	s.BannedRoomUsers = make(map[roomid.RoomID]map[int32]struct{})

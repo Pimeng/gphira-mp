@@ -168,6 +168,65 @@ func (l *Logger) LogRoomMark(lang *l10n.Language, roomID roomid.RoomID, key stri
 	l.write(LevelMark, msg, []any{"room_id", string(roomID)}, nil)
 }
 
+// DebugL logs a localized debug message.
+func (l *Logger) DebugL(lang *l10n.Language, key string, args map[string]string, extra ...any) {
+	if l == nil || lang == nil {
+		return
+	}
+	msg := lang.Format(key, args)
+	extra, ctx := extractContext(extra)
+	l.write(LevelDebug, msg, extra, ctx)
+}
+
+// InfoL logs a localized info message.
+func (l *Logger) InfoL(lang *l10n.Language, key string, args map[string]string, extra ...any) {
+	if l == nil || lang == nil {
+		return
+	}
+	msg := lang.Format(key, args)
+	extra, ctx := extractContext(extra)
+	l.write(LevelInfo, msg, extra, ctx)
+}
+
+// MarkL logs a localized mark message.
+func (l *Logger) MarkL(lang *l10n.Language, key string, args map[string]string, extra ...any) {
+	if l == nil || lang == nil {
+		return
+	}
+	msg := lang.Format(key, args)
+	extra, ctx := extractContext(extra)
+	l.write(LevelMark, msg, extra, ctx)
+}
+
+// WarnL logs a localized warning message.
+func (l *Logger) WarnL(lang *l10n.Language, key string, args map[string]string, extra ...any) {
+	if l == nil || lang == nil {
+		return
+	}
+	msg := lang.Format(key, args)
+	extra, ctx := extractContext(extra)
+	l.write(LevelWarn, msg, extra, ctx)
+}
+
+// ErrorL logs a localized error message.
+func (l *Logger) ErrorL(lang *l10n.Language, key string, args map[string]string, extra ...any) {
+	if l == nil || lang == nil {
+		return
+	}
+	msg := lang.Format(key, args)
+	extra, ctx := extractContext(extra)
+	l.write(LevelError, msg, extra, ctx)
+}
+
+// LogfL logs a localized formatted message at INFO level.
+func (l *Logger) LogfL(lang *l10n.Language, key string, args map[string]string) {
+	if l == nil || lang == nil {
+		return
+	}
+	msg := lang.Format(key, args)
+	l.write(LevelInfo, msg, nil, nil)
+}
+
 // GetBlacklistedIPs returns currently blacklisted IPs.
 func (l *Logger) GetBlacklistedIPs() []struct{ IP string; ExpiresIn int64 } {
 	if l.rateLimiter == nil {
@@ -378,12 +437,12 @@ func formatMeta(args []any) string {
 	if len(args) == 0 {
 		return ""
 	}
-	// Convert slog-style key-value pairs to JSON-like string
+	// Convert slog-style key-value pairs to key: value string
 	var pairs []string
 	for i := 0; i+1 < len(args); i += 2 {
 		key := fmt.Sprintf("%v", args[i])
 		val := fmt.Sprintf("%v", args[i+1])
-		pairs = append(pairs, fmt.Sprintf("%s=%s", key, val))
+		pairs = append(pairs, fmt.Sprintf("%s: %s", key, val))
 	}
 	if len(pairs) == 0 {
 		return ""

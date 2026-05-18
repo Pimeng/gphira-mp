@@ -26,6 +26,7 @@ type CLI struct {
 	scanner *bufio.Scanner
 	stop    chan struct{}
 	wg      sync.WaitGroup
+	done    chan struct{}
 }
 
 // NewCLI creates a new CLI instance.
@@ -38,6 +39,7 @@ func NewCLI(state *state.ServerState, logger *utils.Logger, broadcastAll func(pr
 		kickUserFn:   kickUser,
 		scanner:      bufio.NewScanner(os.Stdin),
 		stop:         make(chan struct{}),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -91,15 +93,21 @@ func (c *CLI) run() {
 		case "contest":
 			c.handleContest(args)
 		case "stop", "exit", "quit":
-			fmt.Println("Stopping server...")
+			fmt.Println(c.state.ServerLang.Format("cli-stopping-server", nil))
 			if c.stopServer != nil {
 				_ = c.stopServer()
 			}
+			close(c.done)
 			return
 		default:
-			fmt.Printf("Unknown command: %s. Type 'help' for available commands.\n", cmd)
+			fmt.Println(c.state.ServerLang.Format("cli-unknown-command", map[string]string{"cmd": cmd}))
 		}
 	}
+}
+
+// Done returns a channel that is closed when the CLI receives a stop command.
+func (c *CLI) Done() <-chan struct{} {
+	return c.done
 }
 
 // Stop signals the CLI to stop reading input.
@@ -109,31 +117,16 @@ func (c *CLI) Stop() {
 }
 
 func (c *CLI) printHelp() {
-	fmt.Println(`Available commands:
-  help, h                  Show this help message
-  list, rooms              List all rooms
-  users                    List all online users
-  kick <id>                Kick a user by ID
-  ban <id>                 Ban a user by ID
-  unban <id>               Unban a user by ID
-  banlist                  List banned users
-  broadcast <msg>          Broadcast a message to all users
-  contest <room> enable    Enable contest mode for a room
-  contest <room> disable   Disable contest mode for a room
-  contest <room> whitelist <id>...
-                           Update contest whitelist
-  contest <room> start [force]
-                           Manually start a contest game
-  stop, exit, quit         Stop the server`)
+	fmt.Println(c.state.ServerLang.Format("cli-help", nil))
 }
 
 func (c *CLI) listRooms() {
 	c.state.WithRLock(func() {
 		if len(c.state.Rooms) == 0 {
-			fmt.Println("No active rooms.")
+			fmt.Println(c.state.ServerLang.Format("cli-no-active-rooms", nil))
 			return
 		}
-		fmt.Printf("%-20s %-10s %-8s %-8s %s\n", "Room ID", "Host", "Users", "Contest", "State")
+		fmt.Printf("%-20s %-10s %-8s %-8s %s\n", c.state.ServerLang.Format("cli-header-room-id", nil), c.state.ServerLang.Format("cli-header-host", nil), c.state.ServerLang.Format("cli-header-users", nil), c.state.ServerLang.Format("cli-header-contest", nil), c.state.ServerLang.Format("cli-header-state", nil))
 		fmt.Println(strings.Repeat("-", 70))
 		for rid, room := range c.state.Rooms {
 			hostName := ""
@@ -157,10 +150,10 @@ func (c *CLI) listRooms() {
 func (c *CLI) listUsers() {
 	c.state.WithRLock(func() {
 		if len(c.state.Users) == 0 {
-			fmt.Println("No online users.")
+			fmt.Println(c.state.ServerLang.Format("cli-no-online-users", nil))
 			return
 		}
-		fmt.Printf("%-10s %-20s %-20s %s\n", "ID", "Name", "Room", "Monitor")
+		fmt.Printf("%-10s %-20s %-20s %s\n", c.state.ServerLang.Format("cli-header-id", nil), c.state.ServerLang.Format("cli-header-name", nil), c.state.ServerLang.Format("cli-header-room", nil), c.state.ServerLang.Format("cli-header-monitor", nil))
 		fmt.Println(strings.Repeat("-", 70))
 		for _, u := range c.state.Users {
 			roomID := ""
@@ -174,12 +167,12 @@ func (c *CLI) listUsers() {
 
 func (c *CLI) cmdKickUser(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: kick <user-id>")
+		fmt.Println(c.state.ServerLang.Format("cli-usage-kick", nil))
 		return
 	}
 	id, err := strconv.ParseInt(args[0], 10, 32)
 	if err != nil {
-		fmt.Println("Invalid user ID")
+		fmt.Println(c.state.ServerLang.Format("cli-invalid-user-id", nil))
 		return
 	}
 	var name string
@@ -189,53 +182,53 @@ func (c *CLI) cmdKickUser(args []string) {
 		}
 	})
 	if c.kickUserFn != nil && c.kickUserFn(int32(id)) {
-		fmt.Printf("Kicked user %d (%s)\n", id, name)
+		fmt.Println(c.state.ServerLang.Format("cli-kicked-user", map[string]string{"id": fmt.Sprintf("%d", id), "name": name}))
 	} else {
-		fmt.Println("User not found or not online")
+		fmt.Println(c.state.ServerLang.Format("cli-user-not-found", nil))
 	}
 }
 
 func (c *CLI) banUser(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: ban <user-id>")
+		fmt.Println(c.state.ServerLang.Format("cli-usage-ban", nil))
 		return
 	}
 	id, err := strconv.ParseInt(args[0], 10, 32)
 	if err != nil {
-		fmt.Println("Invalid user ID")
+		fmt.Println(c.state.ServerLang.Format("cli-invalid-user-id", nil))
 		return
 	}
 	c.state.WithLock(func() {
 		c.state.BannedUsers[int32(id)] = struct{}{}
 	})
-	fmt.Printf("Banned user %d\n", id)
+	fmt.Println(c.state.ServerLang.Format("cli-banned-user", map[string]string{"id": fmt.Sprintf("%d", id)}))
 	_ = c.state.SaveAdminData()
 }
 
 func (c *CLI) unbanUser(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: unban <user-id>")
+		fmt.Println(c.state.ServerLang.Format("cli-usage-unban", nil))
 		return
 	}
 	id, err := strconv.ParseInt(args[0], 10, 32)
 	if err != nil {
-		fmt.Println("Invalid user ID")
+		fmt.Println(c.state.ServerLang.Format("cli-invalid-user-id", nil))
 		return
 	}
 	c.state.WithLock(func() {
 		delete(c.state.BannedUsers, int32(id))
 	})
-	fmt.Printf("Unbanned user %d\n", id)
+	fmt.Println(c.state.ServerLang.Format("cli-unbanned-user", map[string]string{"id": fmt.Sprintf("%d", id)}))
 	_ = c.state.SaveAdminData()
 }
 
 func (c *CLI) banList() {
 	c.state.WithRLock(func() {
 		if len(c.state.BannedUsers) == 0 {
-			fmt.Println("No banned users.")
+			fmt.Println(c.state.ServerLang.Format("cli-no-banned-users", nil))
 			return
 		}
-		fmt.Println("Banned users:")
+		fmt.Println(c.state.ServerLang.Format("cli-banned-users", nil))
 		for id := range c.state.BannedUsers {
 			fmt.Printf("  %d\n", id)
 		}
@@ -244,7 +237,7 @@ func (c *CLI) banList() {
 
 func (c *CLI) broadcast(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: broadcast <message>")
+		fmt.Println(c.state.ServerLang.Format("cli-usage-broadcast", nil))
 		return
 	}
 	msg := strings.Join(args, " ")
@@ -259,18 +252,18 @@ func (c *CLI) broadcast(args []string) {
 	if c.broadcastAll != nil {
 		_ = c.broadcastAll(cmd)
 	}
-	fmt.Println("Broadcast sent.")
+	fmt.Println(c.state.ServerLang.Format("cli-broadcast-sent", nil))
 }
 
 func (c *CLI) handleContest(args []string) {
 	if len(args) < 2 {
-		fmt.Println("Usage: contest <room-id> <enable|disable|whitelist|start> [args...]")
+		fmt.Println(c.state.ServerLang.Format("cli-usage-contest", nil))
 		return
 	}
 
 	rid, err := roomid.Parse(args[0])
 	if err != nil {
-		fmt.Println("Invalid room ID")
+		fmt.Println(c.state.ServerLang.Format("cli-invalid-room-id", nil))
 		return
 	}
 
@@ -286,7 +279,7 @@ func (c *CLI) handleContest(args []string) {
 	case "start":
 		c.contestStart(rid, args[2:])
 	default:
-		fmt.Printf("Unknown contest subcommand: %s\n", subCmd)
+		fmt.Println(c.state.ServerLang.Format("cli-unknown-contest-subcommand", map[string]string{"cmd": subCmd}))
 	}
 }
 
@@ -320,9 +313,9 @@ func (c *CLI) contestEnable(rid roomid.RoomID, userArgs []string) {
 		ok = true
 	})
 	if ok {
-		fmt.Printf("Contest mode enabled for room %s\n", rid)
+		fmt.Println(c.state.ServerLang.Format("cli-contest-enabled", map[string]string{"room": string(rid)}))
 	} else {
-		fmt.Println("Room not found")
+		fmt.Println(c.state.ServerLang.Format("cli-room-not-found", nil))
 	}
 }
 
@@ -337,15 +330,15 @@ func (c *CLI) contestDisable(rid roomid.RoomID) {
 		ok = true
 	})
 	if ok {
-		fmt.Printf("Contest mode disabled for room %s\n", rid)
+		fmt.Println(c.state.ServerLang.Format("cli-contest-disabled", map[string]string{"room": string(rid)}))
 	} else {
-		fmt.Println("Room not found")
+		fmt.Println(c.state.ServerLang.Format("cli-room-not-found", nil))
 	}
 }
 
 func (c *CLI) contestWhitelist(rid roomid.RoomID, userArgs []string) {
 	if len(userArgs) == 0 {
-		fmt.Println("Usage: contest <room> whitelist <user-id>...")
+		fmt.Println(c.state.ServerLang.Format("cli-usage-contest-whitelist", nil))
 		return
 	}
 	var ok bool
@@ -370,9 +363,9 @@ func (c *CLI) contestWhitelist(rid roomid.RoomID, userArgs []string) {
 		ok = true
 	})
 	if ok {
-		fmt.Printf("Contest whitelist updated for room %s\n", rid)
+		fmt.Println(c.state.ServerLang.Format("cli-contest-whitelist-updated", map[string]string{"room": string(rid)}))
 	} else {
-		fmt.Println("Room not found or contest not enabled")
+		fmt.Println(c.state.ServerLang.Format("cli-room-not-found-or-contest-disabled", nil))
 	}
 }
 
@@ -416,7 +409,7 @@ func (c *CLI) contestStart(rid roomid.RoomID, args []string) {
 	})
 
 	if !result.ok {
-		fmt.Printf("Cannot start contest: %s\n", result.state)
+		fmt.Println(c.state.ServerLang.Format("cli-cannot-start-contest", map[string]string{"reason": result.state}))
 		return
 	}
 
@@ -484,7 +477,7 @@ func (c *CLI) contestStart(rid roomid.RoomID, args []string) {
 		}
 	})
 
-	fmt.Printf("Contest game started in room %s\n", rid)
+	fmt.Println(c.state.ServerLang.Format("cli-contest-started", map[string]string{"room": string(rid)}))
 }
 
 func joinInt32s(ids []int32, sep string) string {

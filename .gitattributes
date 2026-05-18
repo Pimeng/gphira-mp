@@ -1,0 +1,23 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Windows batch files must use CRLF to work correctly with cmd.exe
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell scripts use LF (PS supports both, LF is cross-platform friendly)
+*.ps1 text eol=lf
+
+# Go source files
+*.go text eol=lf
+
+# Go module files
+go.mod text eol=lf
+go.sum text eol=lf
+
+# YAML configs
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Markdown docs
+*.md text eol=lf

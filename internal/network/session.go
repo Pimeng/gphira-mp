@@ -117,8 +117,10 @@ func (s *Session) OnCommand(cmd protocol.ClientCommand) error {
 	if s.waitingAuth {
 		s.mu.Unlock()
 		if cmd.Type == protocol.ClientCmdAuthenticate {
+			s.State.Logger.DebugL(s.State.ServerLang, "log-auth-received", map[string]string{"session": s.ID, "remote": s.RemoteIP})
 			return s.handleAuthenticate(cmd.Token)
 		}
+		s.State.Logger.DebugL(s.State.ServerLang, "log-command-before-auth", map[string]string{"session": s.ID, "cmd": fmt.Sprintf("%v", cmd.Type)})
 		return nil
 	}
 	s.mu.Unlock()
@@ -145,7 +147,8 @@ func (s *Session) handleAuthenticate(token string) error {
 
 	info, err := FetchPhiraUserInfo(endpoint, token, s.State.Config.OutboundProxy)
 	if err != nil {
-		s.State.Logger.Warn("auth failed", "session", s.ID, "error", err.Error())
+		s.State.Logger.DebugL(s.State.ServerLang, "log-auth-api-failed", map[string]string{"session": s.ID, "error": err.Error()})
+		s.State.Logger.WarnL(s.State.ServerLang, "log-auth-failed", map[string]string{"session": s.ID, "error": err.Error()})
 		_ = s.Send(protocol.ServerCommand{
 			Type:       protocol.ServerCmdAuthenticate,
 			AuthResult: protocol.Err[protocol.AuthenticateResult](err.Error()),
@@ -183,7 +186,7 @@ func (s *Session) handleAuthenticate(token string) error {
 	// If the user was dangling, restore room state broadcast to notify others.
 	if wasDangling && s.user.Room != nil {
 		room := s.user.Room
-		s.State.Logger.Info("user reconnected", "session", s.ID, "user", s.user.Name, "room", string(room.ID))
+		s.State.Logger.InfoL(s.State.ServerLang, "log-user-reconnected", map[string]string{"session": s.ID, "user": s.user.Name, "room": string(room.ID)})
 		_ = s.broadcastRoom(room, protocol.ServerCommand{Type: protocol.ServerCmdOnJoinRoom, UserInfo: s.user.ToInfo()})
 		_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageJoinRoom, User: s.user.ID, Name: s.user.Name})
 	}
@@ -210,7 +213,11 @@ func (s *Session) handleAuthenticate(token string) error {
 
 	SendWelcomeExtras(s.user, s.State, s.sendSystemChat)
 
-	s.State.Logger.Info("user authenticated", "session", s.ID, "user", info.Name, "id", info.ID)
+	s.State.Logger.InfoL(s.State.ServerLang, "log-user-authenticated", map[string]string{"session": s.ID, "user": info.Name, "id": fmt.Sprintf("%d", info.ID)})
+
+	if clientRoom != nil {
+		s.State.Logger.DebugL(s.State.ServerLang, "log-auth-restored-room", map[string]string{"session": s.ID, "user": info.Name, "room": string(s.user.Room.ID)})
+	}
 	return nil
 }
 
@@ -454,10 +461,25 @@ func (s *Session) CheckHeartbeat(now time.Time) {
 	}
 	if now.Sub(s.lastRecv) > heartbeatDisconnectTimeoutMs*time.Millisecond {
 		s.mu.Unlock()
+		s.State.Logger.DebugL(s.State.ServerLang, "log-heartbeat-timeout", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
 		s.markLost()
 		return
 	}
 	s.mu.Unlock()
+}
+
+func (s *Session) userID() int32 {
+	if s.user != nil {
+		return s.user.ID
+	}
+	return 0
+}
+
+func (s *Session) userName() string {
+	if s.user != nil {
+		return s.user.Name
+	}
+	return ""
 }
 
 func (s *Session) markLost() {
@@ -469,6 +491,8 @@ func (s *Session) markLost() {
 	s.lost = true
 	preserveRoom := s.preserveRoomOnLost
 	s.mu.Unlock()
+
+	s.State.Logger.DebugL(s.State.ServerLang, "log-session-marked-lost", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID()), "preserveRoom": fmt.Sprintf("%v", preserveRoom)})
 
 	s.monitorBuf.Destroy()
 	if s.stream != nil {
@@ -494,6 +518,7 @@ func (s *Session) markLost() {
 		_, isBanned = s.State.BannedUsers[user.ID]
 	})
 	if isBanned {
+		s.State.Logger.DebugL(s.State.ServerLang, "log-banned-user-disconnected", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
 		s.handleUserLeaveAndRemove(user)
 		return
 	}
@@ -501,6 +526,7 @@ func (s *Session) markLost() {
 	// If currently playing, leave room immediately (no dangling).
 	if user.Room != nil {
 		if _, playing := user.Room.State.(*game.StatePlaying); playing {
+			s.State.Logger.DebugL(s.State.ServerLang, "log-user-disconnected-playing", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(user.Room.ID)})
 			s.handleUserLeaveAndRemove(user)
 			return
 		}
@@ -516,6 +542,7 @@ func (s *Session) markLost() {
 
 	// Normal disconnect: mark dangling, keep room association.
 	user.MarkDangle()
+	s.State.Logger.DebugL(s.State.ServerLang, "log-user-dangling", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(user.Room.ID)})
 	s.scheduleDangleCleanup(user)
 }
 
@@ -523,6 +550,7 @@ func (s *Session) markLost() {
 // deletes them from the global user map. Used for banned users and playing-state
 // disconnects where dangling is not desired.
 func (s *Session) handleUserLeaveAndRemove(user *game.User) {
+	s.State.Logger.DebugL(s.State.ServerLang, "log-user-leave-remove", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
 	if user.Room != nil {
 		room := user.Room
 		shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
@@ -564,12 +592,15 @@ func (s *Session) scheduleDangleCleanup(user *game.User) {
 		}
 		// Double-check: if user reconnected, don't remove.
 		if user.Session != nil {
+			s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-skipped", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
 			return
 		}
+		s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-started", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
 
 		dangleRoom := user.DangleRoom()
 		if dangleRoom != nil {
 			room := dangleRoom
+			s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-leaving", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
 			shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 				Broadcast: func(cmd protocol.ServerCommand) error {
 					for _, id := range room.AllParticipantIDs() {

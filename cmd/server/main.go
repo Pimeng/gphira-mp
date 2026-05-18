@@ -165,10 +165,13 @@ func main() {
 	})
 	c.Start()
 
-	// Wait for interrupt signal
+	// Wait for interrupt signal or CLI stop command
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	<-sigCh
+	select {
+	case <-sigCh:
+	case <-c.Done():
+	}
 
 	logger.Mark(lang.Format("log-shutting-down", nil))
 	c.Stop()

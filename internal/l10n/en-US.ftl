@@ -53,3 +53,142 @@ log-http-started=HTTP service started on { $addr }
 log-redis-enabled=Redis cache enabled
 log-shutting-down=Shutting down server
 cli-welcome=Welcome to GPhira MP CLI. Type "help" for available commands.
+
+# Missing existing keys
+label-monitor-suffix= (monitor)
+lang-check=en
+log-room-game-start-monitors=, monitors: { $monitors }
+room-already-ready=You are already ready
+room-not-ready=You are not ready
+room-no-room=You are not in any room
+
+# state.go
+log-config-applied=Config applied: server_name={ $serverName }, lang={ $lang }, replay={ $replay }, room_creation={ $roomCreation }
+log-admin-data-not-found=Admin data file not found: { $path }
+log-admin-data-loaded=Admin data loaded: banned_users={ $bannedUsers }, banned_room_users={ $bannedRoomUsers }
+
+# server.go
+log-admin-data-load-failed=Failed to load admin data: { $err }
+log-http-start-failed=Failed to start HTTP service: { $err }
+log-config-reloaded=Config reloaded
+log-accept-failed=Accept failed: { $err }
+log-rate-limit-exceeded=Rate limit exceeded: { $remote }
+log-connection-accepted=Connection accepted: { $remote }
+log-proxy-protocol-failed=Proxy protocol parse failed: { $err }
+log-proxy-protocol-ok=Proxy protocol ok: source={ $source }
+log-new-connection=New connection: id={ $id }, remote={ $remote }
+log-stream-error=Stream error: id={ $id }, phase={ $phase }, err={ $err }
+log-handshake-failed=Handshake failed: id={ $id }, err={ $err }
+log-handshake-ok=Handshake ok: id={ $id }
+log-http-close-error=HTTP close error: { $err }
+
+# session.go
+log-auth-received=Auth received: session={ $session }, remote={ $remote }
+log-command-before-auth=Command before auth: session={ $session }, cmd={ $cmd }
+log-auth-api-failed=Auth API failed: session={ $session }, error={ $error }
+log-auth-failed=Auth failed: session={ $session }, error={ $error }
+log-user-reconnected=User reconnected: session={ $session }, user={ $user }, room={ $room }
+log-user-authenticated=User authenticated: session={ $session }, user={ $user }, id={ $id }
+log-auth-restored-room=Auth restored room: session={ $session }, user={ $user }, room={ $room }
+log-heartbeat-timeout=Heartbeat timeout: session={ $session }, user={ $user }
+log-session-marked-lost=Session marked lost: session={ $session }, user={ $user }, preserve_room={ $preserveRoom }
+log-banned-user-disconnected=Banned user disconnected: session={ $session }, user={ $user }, name={ $name }
+log-user-disconnected-playing=User disconnected while playing: session={ $session }, user={ $user }, name={ $name }, room={ $room }
+log-user-dangling=User dangling: session={ $session }, user={ $user }, name={ $name }, room={ $room }
+log-user-leave-remove=User leave and remove: session={ $session }, user={ $user }, name={ $name }
+log-dangle-cleanup-skipped=Dangle cleanup skipped (reconnected): session={ $session }, user={ $user }, name={ $name }
+log-dangle-cleanup-started=Dangle cleanup started: session={ $session }, user={ $user }, name={ $name }
+log-dangle-cleanup-leaving=Dangle cleanup leaving room: session={ $session }, user={ $user }, name={ $name }, room={ $room }
+
+# command_router.go
+log-process-command=Process command: user={ $user }, name={ $name }, cmd={ $cmd }
+log-repeated-authenticate=Repeated authenticate: user={ $user }, name={ $name }
+log-chat=Chat: user={ $user }, name={ $name }, room={ $room }, content={ $content }
+log-create-room=Create room: user={ $user }, name={ $name }, room={ $room }
+log-join-room=Join room: user={ $user }, name={ $name }, room={ $room }, monitor={ $monitor }
+log-leave-room=Leave room: user={ $user }, name={ $name }, room={ $room }
+log-lock-room=Lock room: user={ $user }, name={ $name }, room={ $room }, lock={ $lock }
+log-cycle-room=Cycle room: user={ $user }, name={ $name }, room={ $room }, cycle={ $cycle }
+log-select-chart=Select chart: user={ $user }, name={ $name }, room={ $room }, chart_id={ $chartId }
+log-request-start=Request start: user={ $user }, name={ $name }, room={ $room }
+log-ready=Ready: user={ $user }, name={ $name }, room={ $room }
+log-cancel-ready=Cancel ready: user={ $user }, name={ $name }, room={ $room }
+log-played=Played: user={ $user }, name={ $name }, room={ $room }, record_id={ $recordId }
+log-abort=Abort: user={ $user }, name={ $name }, room={ $room }
+log-unknown-command-type=Unknown command type: { $type }
+
+# websocket.go
+log-ws-upgrade-failed=WebSocket upgrade failed: { $err }, remote={ $remote }
+log-ws-connected=WebSocket connected: { $remote }
+log-ws-client-registered=WebSocket client registered: clients={ $clients }
+log-ws-client-leaving=WebSocket client leaving: room={ $room }
+log-ws-broadcast=WebSocket broadcast: room={ $room }, type={ $type }, subs={ $subs }, sent={ $sent }
+log-ws-unexpected-close=WebSocket unexpected close: { $err }
+log-ws-subscribe=WebSocket subscribe: room={ $room }, user={ $user }
+log-ws-admin-subscribe=WebSocket admin subscribe
+
+# welcome.go
+log-welcome-panic=Welcome message panic: { $error }
+
+# room.go
+log-room-all-ready=Room all ready: room={ $room }, users={ $users }
+log-room-game-ended=Room game ended: room={ $room }, results={ $results }, aborted={ $aborted }
+log-game-ended=Game ended in room { $room }
+log-contest-game-ended=Contest game ended in room { $room }: chart={ $chart }, results={ $results }, aborted={ $aborted }
+log-room-host-cycled=Room host cycled: room={ $room }, old_host={ $oldHost }, new_host={ $newHost }
+log-host-changed=Host changed from { $oldHost } to { $newHost } in room { $room }
+
+# cli.go
+cli-unknown-command=Unknown command: { $cmd }. Type 'help' for available commands.
+cli-stopping-server=Stopping server...
+cli-no-active-rooms=No active rooms.
+cli-no-online-users=No online users.
+cli-usage-kick=Usage: kick <user-id>
+cli-invalid-user-id=Invalid user ID
+cli-kicked-user=Kicked user { $id } ({ $name })
+cli-user-not-found=User not found or not online
+cli-usage-ban=Usage: ban <user-id>
+cli-banned-user=Banned user { $id }
+cli-usage-unban=Usage: unban <user-id>
+cli-unbanned-user=Unbanned user { $id }
+cli-no-banned-users=No banned users.
+cli-banned-users=Banned users:
+cli-usage-broadcast=Usage: broadcast <message>
+cli-broadcast-sent=Broadcast sent.
+cli-usage-contest=Usage: contest <room-id> <enable|disable|whitelist|start> [args...]
+cli-invalid-room-id=Invalid room ID
+cli-unknown-contest-subcommand=Unknown contest subcommand: { $cmd }
+cli-contest-enabled=Contest mode enabled for room { $room }
+cli-room-not-found=Room not found
+cli-contest-disabled=Contest mode disabled for room { $room }
+cli-usage-contest-whitelist=Usage: contest <room> whitelist <user-id>...
+cli-contest-whitelist-updated=Contest whitelist updated for room { $room }
+cli-room-not-found-or-contest-disabled=Room not found or contest not enabled
+cli-cannot-start-contest=Cannot start contest: { $reason }
+cli-contest-started=Contest game started in room { $room }
+cli-header-room-id=Room ID
+cli-header-host=Host
+cli-header-users=Users
+cli-header-contest=Contest
+cli-header-state=State
+cli-header-id=ID
+cli-header-name=Name
+cli-header-room=Room
+cli-header-monitor=Monitor
+
+cli-help=Available commands:
+  help, h                  Show this help message
+  list, rooms              List all rooms
+  users                    List all online users
+  kick <id>                Kick a user by ID
+  ban <id>                 Ban a user by ID
+  unban <id>               Unban a user by ID
+  banlist                  List banned users
+  broadcast <msg>          Broadcast a message to all users
+  contest <room> enable    Enable contest mode for a room
+  contest <room> disable   Disable contest mode for a room
+  contest <room> whitelist <id>...
+                           Update contest whitelist
+  contest <room> start [force]
+                           Manually start a contest game
+  stop, exit, quit         Stop the server

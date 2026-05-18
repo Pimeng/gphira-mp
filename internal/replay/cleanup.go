@@ -4,17 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 // CleanupHandle controls the replay cleanup background task.
 type CleanupHandle struct {
-	stopCh chan struct{}
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // Stop terminates the cleanup scheduler.
 func (h *CleanupHandle) Stop() {
-	close(h.stopCh)
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
 }
 
 // StartReplayCleanup starts a background task that removes replay files older than ttlDays.

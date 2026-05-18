@@ -32,8 +32,15 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 	st := ctx.State
 	user := ctx.User
 
+	if st.Logger != nil {
+		st.Logger.DebugL(st.ServerLang, "log-process-command", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "cmd": fmt.Sprintf("%v", cmd.Type)})
+	}
+
 	switch cmd.Type {
 	case protocol.ClientCmdAuthenticate:
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-repeated-authenticate", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name})
+		}
 		return protocol.ServerCommand{
 			Type:       protocol.ServerCmdAuthenticate,
 			AuthResult: protocol.Err[protocol.AuthenticateResult](user.Lang.Format("auth-repeated-authenticate", nil)),
@@ -41,6 +48,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdChat:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-chat", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID), "content": cmd.Message})
+		}
 		content := cmd.Message
 		if !st.Config.ChatEnabled {
 			content = st.ServerLang.Format("chat-disabled-by-server", nil)
@@ -102,12 +112,18 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 		return protocol.ServerCommand{}, nil
 
 	case protocol.ClientCmdCreateRoom:
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-create-room", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(cmd.RoomID)})
+		}
 		if err := ctx.ProcessCreateRoom(cmd.RoomID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdCreateRoom, Result: protocol.Err[struct{}](err.Error())}, nil
 		}
 		return protocol.ServerCommand{Type: protocol.ServerCmdCreateRoom, Result: protocol.Ok(struct{}{})}, nil
 
 	case protocol.ClientCmdJoinRoom:
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-join-room", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(cmd.RoomID), "monitor": fmt.Sprintf("%v", cmd.Monitor)})
+		}
 		resp, err := ctx.ProcessJoinRoom(cmd.RoomID, cmd.Monitor)
 		if err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdJoinRoom, JoinResult: protocol.Err[protocol.JoinRoomResponse](err.Error())}, nil
@@ -116,6 +132,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdLeaveRoom:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-leave-room", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+		}
 		shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 			Broadcast: func(cmd protocol.ServerCommand) error {
 				return ctx.BroadcastRoom(room, cmd)
@@ -150,6 +169,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdLockRoom:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-lock-room", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID), "lock": fmt.Sprintf("%v", cmd.Lock)})
+		}
 		if err := room.CheckHost(user.ID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdLockRoom, Result: protocol.Err[struct{}](err.Error())}, nil
 		}
@@ -166,6 +188,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdCycleRoom:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-cycle-room", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID), "cycle": fmt.Sprintf("%v", cmd.Cycle)})
+		}
 		if err := room.CheckHost(user.ID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdCycleRoom, Result: protocol.Err[struct{}](err.Error())}, nil
 		}
@@ -182,6 +207,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdSelectChart:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-select-chart", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID), "chartId": fmt.Sprintf("%d", cmd.ChartID)})
+		}
 		if err := room.ValidateSelectChart(user.ID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdSelectChart, Result: protocol.Err[struct{}](err.Error())}, nil
 		}
@@ -202,6 +230,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdRequestStart:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-request-start", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+		}
 		if err := room.ValidateStart(user.ID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdRequestStart, Result: protocol.Err[struct{}](err.Error())}, nil
 		}
@@ -219,6 +250,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdReady:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-ready", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+		}
 		if _, ok := room.State.(*game.StatePlaying); ok {
 			return protocol.ServerCommand{Type: protocol.ServerCmdReady, Result: protocol.Err[struct{}](user.Lang.Format("room-invalid-state", nil))}, nil
 		}
@@ -237,6 +271,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdCancelReady:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-cancel-ready", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+		}
 		if _, ok := room.State.(*game.StatePlaying); ok {
 			return protocol.ServerCommand{Type: protocol.ServerCmdCancelReady, Result: protocol.Err[struct{}](user.Lang.Format("room-invalid-state", nil))}, nil
 		}
@@ -260,6 +297,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdPlayed:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-played", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID), "recordId": fmt.Sprintf("%d", cmd.RecordID)})
+		}
 		record, err := ctx.FetchRecord(cmd.RecordID)
 		if err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdPlayed, Result: protocol.Err[struct{}](err.Error())}, nil
@@ -301,6 +341,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 
 	case protocol.ClientCmdAbort:
 		room := ctx.RequireRoom()
+		if st.Logger != nil {
+			st.Logger.DebugL(st.ServerLang, "log-abort", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+		}
 		if st, ok := room.State.(*game.StatePlaying); ok {
 			if _, results := st.Results[user.ID]; results {
 				return protocol.ServerCommand{Type: protocol.ServerCmdAbort, Result: protocol.Err[struct{}](user.Lang.Format("record-already-uploaded", nil))}, nil
@@ -321,7 +364,7 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 		return protocol.ServerCommand{}, nil
 	}
 
-	return protocol.ServerCommand{}, fmt.Errorf("unknown command type: %d", cmd.Type)
+	return protocol.ServerCommand{}, fmt.Errorf("%s", user.Lang.Format("log-unknown-command-type", map[string]string{"type": fmt.Sprintf("%d", cmd.Type)}))
 }
 
 func (ctx *CommandContext) findUser(id int32) *game.User {

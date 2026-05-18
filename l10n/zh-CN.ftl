@@ -53,3 +53,142 @@ log-http-started=HTTP 服务已启动 { $addr }
 log-redis-enabled=Redis 缓存已启用
 log-shutting-down=正在关闭服务端
 cli-welcome=欢迎使用 GPhira MP CLI. 输入 "help" 获取命令列表
+
+# 缺失的已有 key
+label-monitor-suffix=（旁观）
+lang-check=zh
+log-room-game-start-monitors=，旁观：{ $monitors }
+room-already-ready=你已经准备就绪
+room-not-ready=你尚未准备就绪
+room-no-room=你不在任何房间中
+
+# state.go
+log-config-applied=配置已应用：服务器名称={ $serverName }，语言={ $lang }，回放={ $replay }，房间创建={ $roomCreation }
+log-admin-data-not-found=admin 数据文件未找到：{ $path }
+log-admin-data-loaded=admin 数据已加载：封禁用户={ $bannedUsers }，房间封禁={ $bannedRoomUsers }
+
+# server.go
+log-admin-data-load-failed=加载 admin 数据失败：{ $err }
+log-http-start-failed=启动 HTTP 服务失败：{ $err }
+log-config-reloaded=配置已重载
+log-accept-failed=接受连接失败：{ $err }
+log-rate-limit-exceeded=连接速率限制：{ $remote }
+log-connection-accepted=连接已接受：{ $remote }
+log-proxy-protocol-failed=代理协议解析失败：{ $err }
+log-proxy-protocol-ok=代理协议成功：源地址={ $source }
+log-new-connection=新连接：ID={ $id }，远程地址={ $remote }
+log-stream-error=流错误：ID={ $id }，阶段={ $phase }，错误={ $err }
+log-handshake-failed=握手失败：ID={ $id }，错误={ $err }
+log-handshake-ok=握手成功：ID={ $id }
+log-http-close-error=关闭 HTTP 服务错误：{ $err }
+
+# session.go
+log-auth-received=收到认证：会话={ $session }，远程地址={ $remote }
+log-command-before-auth=认证前收到命令：会话={ $session }，命令={ $cmd }
+log-auth-api-failed=认证 API 失败：会话={ $session }，错误={ $error }
+log-auth-failed=认证失败：会话={ $session }，错误={ $error }
+log-user-reconnected=用户重连：会话={ $session }，用户={ $user }，房间={ $room }
+log-user-authenticated=用户认证成功：会话={ $session }，用户={ $user }，ID={ $id }
+log-auth-restored-room=认证恢复房间：会话={ $session }，用户={ $user }，房间={ $room }
+log-heartbeat-timeout=心跳超时：会话={ $session }，用户={ $user }
+log-session-marked-lost=会话标记为丢失：会话={ $session }，用户={ $user }，保留房间={ $preserveRoom }
+log-banned-user-disconnected=封禁用户断开连接：会话={ $session }，用户={ $user }，名称={ $name }
+log-user-disconnected-playing=用户游戏中断开：会话={ $session }，用户={ $user }，名称={ $name }，房间={ $room }
+log-user-dangling=用户挂起：会话={ $session }，用户={ $user }，名称={ $name }，房间={ $room }
+log-user-leave-remove=用户离开并移除：会话={ $session }，用户={ $user }，名称={ $name }
+log-dangle-cleanup-skipped=挂起清理跳过（已重连）：会话={ $session }，用户={ $user }，名称={ $name }
+log-dangle-cleanup-started=挂起清理开始：会话={ $session }，用户={ $user }，名称={ $name }
+log-dangle-cleanup-leaving=挂起清理离开房间：会话={ $session }，用户={ $user }，名称={ $name }，房间={ $room }
+
+# command_router.go
+log-process-command=处理命令：用户={ $user }，名称={ $name }，命令={ $cmd }
+log-repeated-authenticate=重复认证：用户={ $user }，名称={ $name }
+log-chat=聊天：用户={ $user }，名称={ $name }，房间={ $room }，内容={ $content }
+log-create-room=创建房间：用户={ $user }，名称={ $name }，房间={ $room }
+log-join-room=加入房间：用户={ $user }，名称={ $name }，房间={ $room }，旁观={ $monitor }
+log-leave-room=离开房间：用户={ $user }，名称={ $name }，房间={ $room }
+log-lock-room=锁定房间：用户={ $user }，名称={ $name }，房间={ $room }，锁定={ $lock }
+log-cycle-room=轮转房间：用户={ $user }，名称={ $name }，房间={ $room }，轮转={ $cycle }
+log-select-chart=选择谱面：用户={ $user }，名称={ $name }，房间={ $room }，谱面ID={ $chartId }
+log-request-start=请求开始：用户={ $user }，名称={ $name }，房间={ $room }
+log-ready=准备就绪：用户={ $user }，名称={ $name }，房间={ $room }
+log-cancel-ready=取消准备：用户={ $user }，名称={ $name }，房间={ $room }
+log-played=上传成绩：用户={ $user }，名称={ $name }，房间={ $room }，记录ID={ $recordId }
+log-abort=中止对局：用户={ $user }，名称={ $name }，房间={ $room }
+log-unknown-command-type=未知命令类型：{ $type }
+
+# websocket.go
+log-ws-upgrade-failed=WebSocket 升级失败：{ $err }，远程地址={ $remote }
+log-ws-connected=WebSocket 已连接：{ $remote }
+log-ws-client-registered=WebSocket 客户端注册：客户端数={ $clients }
+log-ws-client-leaving=WebSocket 客户端离开：房间={ $room }
+log-ws-broadcast=WebSocket 广播：房间={ $room }，类型={ $type }，订阅数={ $subs }，发送数={ $sent }
+log-ws-unexpected-close=WebSocket 异常关闭：{ $err }
+log-ws-subscribe=WebSocket 订阅：房间={ $room }，用户={ $user }
+log-ws-admin-subscribe=WebSocket 管理员订阅
+
+# welcome.go
+log-welcome-panic=欢迎消息 panic：{ $error }
+
+# room.go
+log-room-all-ready=房间全部准备就绪：房间={ $room }，用户数={ $users }
+log-room-game-ended=房间对局结束：房间={ $room }，成绩数={ $results }，中止数={ $aborted }
+log-game-ended=房间 { $room } 对局结束
+log-contest-game-ended=比赛房间 { $room } 对局结束：谱面={ $chart }，成绩={ $results }，中止={ $aborted }
+log-room-host-cycled=房间房主轮转：房间={ $room }，旧房主={ $oldHost }，新房主={ $newHost }
+log-host-changed=房间 { $room } 房主从 { $oldHost } 变更为 { $newHost }
+
+# cli.go
+cli-unknown-command=未知命令：{ $cmd }。输入 "help" 获取可用命令列表。
+cli-stopping-server=正在停止服务端...
+cli-no-active-rooms=没有活跃房间。
+cli-no-online-users=没有在线用户。
+cli-usage-kick=用法：kick <用户ID>
+cli-invalid-user-id=无效的用户ID
+cli-kicked-user=已踢出用户 { $id }（{ $name }）
+cli-user-not-found=用户未找到或不在线
+cli-usage-ban=用法：ban <用户ID>
+cli-banned-user=已封禁用户 { $id }
+cli-usage-unban=用法：unban <用户ID>
+cli-unbanned-user=已解封用户 { $id }
+cli-no-banned-users=没有封禁用户。
+cli-banned-users=封禁用户列表：
+cli-usage-broadcast=用法：broadcast <消息>
+cli-broadcast-sent=广播已发送。
+cli-usage-contest=用法：contest <房间ID> <enable|disable|whitelist|start> [参数...]
+cli-invalid-room-id=无效的房间ID
+cli-unknown-contest-subcommand=未知比赛子命令：{ $cmd }
+cli-contest-enabled=房间 { $room } 比赛模式已启用
+cli-room-not-found=房间未找到
+cli-contest-disabled=房间 { $room } 比赛模式已禁用
+cli-usage-contest-whitelist=用法：contest <房间> whitelist <用户ID>...
+cli-contest-whitelist-updated=房间 { $room } 比赛白名单已更新
+cli-room-not-found-or-contest-disabled=房间未找到或比赛模式未启用
+cli-cannot-start-contest=无法开始比赛：{ $reason }
+cli-contest-started=房间 { $room } 比赛已开始
+cli-header-room-id=房间ID
+cli-header-host=房主
+cli-header-users=用户
+cli-header-contest=比赛
+cli-header-state=状态
+cli-header-id=ID
+cli-header-name=名称
+cli-header-room=房间
+cli-header-monitor=旁观
+
+cli-help=可用命令：
+  help, h                  显示此帮助信息
+  list, rooms              列出所有房间
+  users                    列出所有在线用户
+  kick <id>                按ID踢出用户
+  ban <id>                 按ID封禁用户
+  unban <id>               按ID解封用户
+  banlist                  列出封禁用户
+  broadcast <msg>          向所有用户广播消息
+  contest <room> enable    为房间启用比赛模式
+  contest <room> disable   为房间禁用比赛模式
+  contest <room> whitelist <id>...
+                           更新比赛白名单
+  contest <room> start [force]
+                           手动开始比赛
+  stop, exit, quit         停止服务端

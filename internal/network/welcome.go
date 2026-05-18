@@ -241,7 +241,7 @@ func SendWelcomeExtras(user *game.User, st *state.ServerState, sendSystemChat fu
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				st.Logger.Warn("welcome message panic", "error", fmt.Sprintf("%v", r))
+				st.Logger.WarnL(st.ServerLang, "log-welcome-panic", map[string]string{"error": fmt.Sprintf("%v", r)})
 			}
 		}()
 

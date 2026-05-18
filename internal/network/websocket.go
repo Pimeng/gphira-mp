@@ -2,6 +2,7 @@ package network
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -76,6 +77,9 @@ func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		if s.state.state.Logger != nil {
+			s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-upgrade-failed", map[string]string{"err": fmt.Sprintf("%v", err), "remote": r.RemoteAddr})
+		}
 		return
 	}
 	client := &WSClient{
@@ -83,6 +87,9 @@ func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		isAlive: true,
 		send:    make(chan []byte, 64),
 		server:  s,
+	}
+	if s.state.state.Logger != nil {
+		s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-connected", map[string]string{"remote": conn.RemoteAddr().String()})
 	}
 	s.register <- client
 
@@ -113,19 +120,30 @@ func (s *WSServer) run() {
 			s.mu.Lock()
 			s.clients[client] = struct{}{}
 			s.mu.Unlock()
+			if s.state.state.Logger != nil {
+				s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-client-registered", map[string]string{"clients": fmt.Sprintf("%d", len(s.clients))})
+			}
 
 		case client := <-s.leave:
+			if s.state.state.Logger != nil {
+				s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-client-leaving", map[string]string{"room": string(client.roomID)})
+			}
 			s.removeClient(client)
 
 		case msg := <-s.broadcast:
 			s.mu.RLock()
 			subs := s.rooms[msg.roomID]
 			payload, _ := json.Marshal(map[string]any{"type": msg.msgType, "data": msg.data})
+			count := 0
 			for client := range subs {
 				select {
 				case client.send <- payload:
+					count++
 				default:
 				}
+			}
+			if s.state.state.Logger != nil {
+				s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-broadcast", map[string]string{"room": string(msg.roomID), "type": msg.msgType, "subs": fmt.Sprintf("%d", len(subs)), "sent": fmt.Sprintf("%d", count)})
 			}
 			s.mu.RUnlock()
 
@@ -202,7 +220,7 @@ func (c *WSClient) readPump() {
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				if c.server.state.state.Logger != nil {
-					c.server.state.state.Logger.Debug("websocket unexpected close", "err", err)
+					c.server.state.state.Logger.DebugL(c.server.state.state.ServerLang, "log-ws-unexpected-close", map[string]string{"err": fmt.Sprintf("%v", err)})
 				}
 			}
 			break
@@ -225,6 +243,9 @@ func (c *WSClient) readPump() {
 			c.sendJSON(map[string]any{"type": "pong"})
 
 		case "subscribe":
+			if c.server.state.state.Logger != nil {
+				c.server.state.state.Logger.DebugL(c.server.state.state.ServerLang, "log-ws-subscribe", map[string]string{"room": msg.RoomID, "user": fmt.Sprintf("%d", msg.UserID)})
+			}
 			rid, err := roomid.Parse(msg.RoomID)
 			if err != nil {
 				c.sendJSON(map[string]any{"type": "error", "message": "invalid-room-id"})
@@ -268,6 +289,9 @@ func (c *WSClient) readPump() {
 			c.sendJSON(map[string]any{"type": "unsubscribed"})
 
 		case "admin_subscribe":
+			if c.server.state.state.Logger != nil {
+				c.server.state.state.Logger.DebugL(c.server.state.state.ServerLang, "log-ws-admin-subscribe", nil)
+			}
 			token := msg.Token
 			expected := c.server.state.state.Config.AdminToken
 			if expected == "" || token != expected {

@@ -81,6 +81,18 @@ func (r *Room) AddUser(userID int32, monitor bool) bool {
 	return true
 }
 
+func (r *Room) UserCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.users)
+}
+
+func (r *Room) MonitorCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.monitors)
+}
+
 func (r *Room) RemoveUser(userID int32, monitor bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -303,6 +315,10 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 			return nil
 		}
 
+		if callbacks.Logger != nil {
+			callbacks.Logger.DebugL(callbacks.Lang, "log-room-all-ready", map[string]string{"room": string(r.ID), "users": fmt.Sprintf("%d", len(r.users))})
+		}
+
 		if callbacks.OnEnterPlaying != nil {
 			callbacks.OnEnterPlaying(r)
 		}
@@ -351,7 +367,7 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 		}
 
 		if callbacks.Logger != nil && callbacks.Lang != nil {
-			callbacks.Logger.Logf("Game ended in room %s", r.ID)
+			callbacks.Logger.LogfL(callbacks.Lang, "log-game-ended", map[string]string{"room": string(r.ID)})
 		}
 
 		if len(s.Results) > 0 && callbacks.Lang != nil && callbacks.UsersById != nil {
@@ -434,6 +450,10 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 			callbacks.OnGameEnd(r)
 		}
 
+		if callbacks.Logger != nil {
+			callbacks.Logger.DebugL(callbacks.Lang, "log-room-game-ended", map[string]string{"room": string(r.ID), "results": fmt.Sprintf("%d", len(s.Results)), "aborted": fmt.Sprintf("%d", len(s.Aborted))})
+		}
+
 		r.State = &StateSelectChart{}
 
 		if callbacks.Broadcast != nil {
@@ -494,8 +514,7 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 			abortedJSON, _ := json.Marshal(abortedIDs)
 
 			if callbacks.Logger != nil && callbacks.Lang != nil {
-				callbacks.Logger.Logf("Contest game ended in room %s: chart=%s results=%s aborted=%s",
-					r.ID, chartText, string(resultsJSON), string(abortedJSON))
+				callbacks.Logger.LogfL(callbacks.Lang, "log-contest-game-ended", map[string]string{"room": string(r.ID), "chart": chartText, "results": string(resultsJSON), "aborted": string(abortedJSON)})
 			}
 			callbacks.DisbandRoom(r)
 			return nil
@@ -518,8 +537,12 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 				oldHost := r.HostID
 				r.HostID = newHost
 
+				if callbacks.Logger != nil {
+					callbacks.Logger.DebugL(callbacks.Lang, "log-room-host-cycled", map[string]string{"room": string(r.ID), "oldHost": fmt.Sprintf("%d", oldHost), "newHost": fmt.Sprintf("%d", newHost)})
+				}
+
 				if callbacks.Logger != nil && callbacks.Lang != nil {
-					callbacks.Logger.Logf("Host changed from %d to %d in room %s", oldHost, newHost, r.ID)
+					callbacks.Logger.LogfL(callbacks.Lang, "log-host-changed", map[string]string{"oldHost": fmt.Sprintf("%d", oldHost), "newHost": fmt.Sprintf("%d", newHost), "room": string(r.ID)})
 				}
 
 				if callbacks.Broadcast != nil {
