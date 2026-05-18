@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/Pimeng/gphira-mp-next/internal/replay"
 	"github.com/Pimeng/gphira-mp-next/internal/state"
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
-	"github.com/Pimeng/gphira-mp-next/internal/version"
 	"github.com/Pimeng/gphira-mp-next/pkg/protocol"
 	"github.com/Pimeng/gphira-mp-next/pkg/stream"
 )
@@ -36,7 +36,7 @@ type Server struct {
 
 // StartServer creates and starts a new TCP server.
 func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath string) (*Server, error) {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
@@ -65,7 +65,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 	go s.heartbeatLoop()
 
 	if cfg.HTTPService {
-		httpAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.HTTPPort)
+		httpAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.HTTPPort))
 		httpServer, err := StartHTTPServer(httpAddr, s.state, logger)
 		if err != nil {
 			logger.Warn("failed to start http server", "err", err)
@@ -74,10 +74,11 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 		}
 	}
 
-	ver := version.ReadVersion()
-	logger.Mark("server version", "version", ver)
-	logger.Mark("runtime env", "go", runtime.Version(), "os", runtime.GOOS, "arch", runtime.GOARCH)
-	logger.Mark("server started", "addr", addr, "name", s.state.ServerName)
+	logger.Mark(s.state.ServerLang.Format("log-server-listening", map[string]string{"addr": addr}))
+	logger.Mark(s.state.ServerLang.Format("log-server-info", map[string]string{
+		"name":  s.state.ServerName,
+		"level": strings.ToUpper(logger.GetLevel()),
+	}))
 
 	// Start config watcher if config file exists
 	if configPath != "" {

@@ -64,6 +64,13 @@ var translations = map[string]map[string]string{
 		"log-room-lock-unlocked":      "取消锁定",
 		"log-room-cycle-on":           "开启轮转房主",
 		"log-room-cycle-off":          "关闭轮转房主",
+		"log-server-starting":         "正在启动 GPhira MP 服务端",
+		"log-server-listening":        "服务端正在偷听 { $addr }",
+		"log-server-info":             "服务端昵称：{ $name } ，日志等级{ $level }",
+		"log-http-started":            "HTTP 服务已启动 { $addr }",
+		"log-redis-enabled":           "Redis 缓存已启用",
+		"log-shutting-down":           "正在关闭服务端",
+		"cli-welcome":                 "欢迎使用 GPhira MP CLI. 输入 \"help\" 获取命令列表",
 	},
 	"en-US": {
 		"room-only-host":              "Only the host can do this",
@@ -111,6 +118,13 @@ var translations = map[string]map[string]string{
 		"log-room-lock-unlocked":      "unlocked",
 		"log-room-cycle-on":           "enabled cycle host",
 		"log-room-cycle-off":          "disabled cycle host",
+		"log-server-starting":         "Starting GPhira MP server",
+		"log-server-listening":        "Server listening on { $addr }",
+		"log-server-info":             "Server name: { $name }, log level: { $level }",
+		"log-http-started":            "HTTP service started on { $addr }",
+		"log-redis-enabled":           "Redis cache enabled",
+		"log-shutting-down":           "Shutting down server",
+		"cli-welcome":                 "Welcome to GPhira MP CLI. Type \"help\" for available commands.",
 	},
 }
 

@@ -49,7 +49,7 @@ func (c *CLI) Start() {
 
 func (c *CLI) run() {
 	defer c.wg.Done()
-	fmt.Println("Phira MP CLI. Type 'help' for available commands.")
+	fmt.Println(c.state.ServerLang.Format("cli-welcome", nil))
 	for {
 		select {
 		case <-c.stop:

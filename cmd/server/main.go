@@ -11,6 +11,7 @@ import (
 
 	"github.com/Pimeng/gphira-mp-next/internal/cli"
 	"github.com/Pimeng/gphira-mp-next/internal/config"
+	"github.com/Pimeng/gphira-mp-next/internal/l10n"
 	"github.com/Pimeng/gphira-mp-next/internal/network"
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
 	"github.com/Pimeng/gphira-mp-next/pkg/protocol"
@@ -115,16 +116,18 @@ func main() {
 	logger.SetRateLimiter(utils.NewRateLimiter(10, time.Minute, 5*time.Minute))
 	logger.SetTestAccountIDs(cfg.TestAccountIDs)
 
+	lang := l10n.New(cfg.Lang)
+
 	// Initialize Redis if configured
 	if cfg.Redis != nil && cfg.Redis.Enabled {
 		if err := utils.InitRedis(cfg.Redis); err != nil {
 			logger.Warn("failed to initialize Redis cache", "err", err)
 		} else {
-			logger.Mark("Redis cache enabled")
+			logger.Mark(lang.Format("log-redis-enabled", nil))
 		}
 	}
 
-	logger.Mark("starting Phira MP server")
+	logger.Mark(lang.Format("log-server-starting", nil))
 
 	server, err := network.StartServer(cfg, logger, configPath)
 	if err != nil {
@@ -158,7 +161,7 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
 
-	logger.Mark("shutting down server")
+	logger.Mark(lang.Format("log-shutting-down", nil))
 	c.Stop()
 	utils.CloseRedis()
 	if err := server.Close(); err != nil {

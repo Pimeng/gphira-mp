@@ -56,7 +56,7 @@ func StartHTTPServer(addr string, state *state.ServerState, logger *utils.Logger
 		}
 	}()
 
-	logger.Mark("http server started", "addr", addr)
+	logger.Mark(state.ServerLang.Format("log-http-started", map[string]string{"addr": addr}))
 	return h, nil
 }
 

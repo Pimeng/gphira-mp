@@ -2,9 +2,11 @@ package utils
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -57,15 +59,21 @@ type Logger struct {
 // NewLogger creates a new Logger.
 func NewLogger(level string) *Logger {
 	minLvl := parseLogLevel(level)
+	useColor := shouldUseColor()
 	l := &Logger{
 		minLevel:        minLvl,
 		consoleMinLevel: minLvl,
-		useColor:        shouldUseColor(),
+		useColor:        useColor,
 		logsDir:         "logs",
 		testAccountIDs:  make(map[int32]struct{}),
 	}
 	_ = os.MkdirAll(l.logsDir, 0755)
-	l.slogLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	// Avoid duplicate output in interactive terminals
+	var slogOut io.Writer = os.Stderr
+	if useColor {
+		slogOut = io.Discard
+	}
+	l.slogLogger = slog.New(slog.NewTextHandler(slogOut, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 	return l
@@ -184,6 +192,11 @@ func (l *Logger) ClearBlacklist() {
 	l.rateLimiter.ClearBlacklist()
 }
 
+// GetLevel returns the current minimum log level.
+func (l *Logger) GetLevel() string {
+	return string(l.minLevel)
+}
+
 // UpdateOptions updates logger options at runtime.
 func (l *Logger) UpdateOptions(level string, testAccountIDs []int) {
 	l.fileMu.Lock()
@@ -222,7 +235,7 @@ func (l *Logger) write(level LogLevel, msg string, args []any, ctx *LogContext) 
 	dateKey := formatDateKey(now)
 	ts := formatTimestamp(now)
 	meta := formatMeta(args)
-	line := fmt.Sprintf("[%s] [%s] %s%s\n", ts, level, msg, meta)
+	fileLine := fmt.Sprintf("[%s] [%s] %s%s\n", ts, level, msg, meta)
 
 	// File output (with rotation)
 	var skipFile bool
@@ -238,16 +251,18 @@ func (l *Logger) write(level LogLevel, msg string, args []any, ctx *LogContext) 
 			l.rotate(dateKey)
 		}
 		if l.fileStream != nil {
-			_, _ = l.fileStream.WriteString(line)
+			_, _ = l.fileStream.WriteString(fileLine)
 		}
 		l.fileMu.Unlock()
 	}
 
 	// Console output with color
 	if levelWeights[level] >= levelWeights[l.consoleMinLevel] {
-		consoleLine := line
+		var consoleLine string
 		if l.useColor {
-			consoleLine = colorizeLine(line, level)
+			consoleLine = formatConsoleLine(ts, level, msg)
+		} else {
+			consoleLine = fileLine
 		}
 		if level == LevelError || level == LevelWarn {
 			_, _ = os.Stderr.WriteString(consoleLine)
@@ -315,27 +330,37 @@ func shouldUseColor() bool {
 			return true
 		}
 	}
+	// Windows terminals generally support ANSI colors
+	if runtime.GOOS == "windows" {
+		return true
+	}
 	return false
 }
 
-func colorizeLine(line string, level LogLevel) string {
-	var code string
+func formatConsoleLine(ts string, level LogLevel, msg string) string {
+	gray := "\x1b[90m"
+	reset := "\x1b[0m"
+
+	var levelColor string
 	switch level {
 	case LevelDebug:
-		code = "\x1b[34m" // blue
-	case LevelInfo, LevelMark:
-		code = "\x1b[32m" // green
+		levelColor = "\x1b[34m" // blue
+	case LevelInfo:
+		levelColor = "\x1b[32m" // green
+	case LevelMark:
+		levelColor = "\x1b[90m" // gray
 	case LevelWarn:
-		code = "\x1b[33m" // yellow
+		levelColor = "\x1b[33m" // yellow
 	case LevelError:
-		code = "\x1b[31m" // red
+		levelColor = "\x1b[31m" // red
 	default:
-		return line
+		levelColor = reset
 	}
-	if strings.HasSuffix(line, "\n") {
-		return code + line[:len(line)-1] + "\x1b[0m\n"
-	}
-	return code + line + "\x1b[0m"
+
+	return fmt.Sprintf("%s[%s]%s %s[%s]%s %s%s\n",
+		gray, ts, reset,
+		levelColor, level, reset,
+		msg, reset)
 }
 
 func formatDateKey(t time.Time) string {
