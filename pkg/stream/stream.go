@@ -137,6 +137,16 @@ func (s *Stream[S, R]) readLoop() {
 				continue
 			}
 
+			if s.fastPath != nil && s.fastPath(pkt) {
+				if err := s.handler(pkt); err != nil {
+					if s.onError != nil {
+						s.onError("handler", err)
+					}
+					s.close()
+				}
+				continue
+			}
+
 			s.handlerSem <- struct{}{}
 
 			go func(p R) {
@@ -208,6 +218,9 @@ func (s *Stream[S, R]) flushSendBatch() {
 
 	s.sendMu.Lock()
 	s.sending = false
+	if len(s.sendBatch) > 0 && s.sendTimer == nil {
+		s.sendTimer = time.AfterFunc(0, s.flushSendBatch)
+	}
 	s.sendMu.Unlock()
 }
 

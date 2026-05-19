@@ -238,10 +238,12 @@ func (c *CLI) listRooms() {
 			if u := c.state.Users[room.HostID]; u != nil {
 				hostName = u.GetName()
 			}
-			stateStr := "select"
+			stateStr := c.state.ServerLang.Format("cli-room-state-select", nil)
 			switch room.State.(type) {
-			case interface{ String() string }:
-				stateStr = fmt.Sprintf("%T", room.State)
+			case *game.StatePlaying:
+				stateStr = c.state.ServerLang.Format("cli-room-state-playing", nil)
+			case *game.StateWaitForReady:
+				stateStr = c.state.ServerLang.Format("cli-room-state-waiting", nil)
 			}
 			contestStr := "no"
 			if room.Contest != nil {

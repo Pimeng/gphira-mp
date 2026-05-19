@@ -342,7 +342,10 @@ func EncodeClientRoomState(w *BinaryWriter, v ClientRoomState) {
 
 func DecodeClientRoomState(r *BinaryReader) ClientRoomState {
 	idStr := r.ReadString()
-	id, _ := roomid.Parse(idStr)
+	id, err := roomid.Parse(idStr)
+	if err != nil {
+		panic(err)
+	}
 	state := DecodeRoomState(r)
 	live := r.ReadBool()
 	locked := r.ReadBool()
@@ -508,10 +511,16 @@ func DecodeClientCommand(r *BinaryReader) ClientCommand {
 	case ClientCmdJudges:
 		return ClientCommand{Type: ClientCmdJudges, Judges: ReadArray(r, decodeJudgeEvent)}
 	case ClientCmdCreateRoom:
-		id, _ := roomid.Parse(r.ReadString())
+		id, err := roomid.Parse(r.ReadString())
+		if err != nil {
+			panic(err)
+		}
 		return ClientCommand{Type: ClientCmdCreateRoom, RoomID: id}
 	case ClientCmdJoinRoom:
-		id, _ := roomid.Parse(r.ReadString())
+		id, err := roomid.Parse(r.ReadString())
+		if err != nil {
+			panic(err)
+		}
 		return ClientCommand{Type: ClientCmdJoinRoom, RoomID: id, Monitor: r.ReadBool()}
 	case ClientCmdLeaveRoom:
 		return ClientCommand{Type: ClientCmdLeaveRoom}

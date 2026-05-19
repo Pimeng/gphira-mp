@@ -33,8 +33,8 @@ func TestMonitorBufferDoesNotMergeDifferentMonitorSets(t *testing.T) {
 		})
 	})
 
-	buffer.BufferTouches(1, []protocol.TouchFrame{{}}, []int32{1, 3})
-	buffer.BufferTouches(1, []protocol.TouchFrame{{}}, []int32{1, 2, 3})
+	buffer.BufferTouches(1, []protocol.TouchFrame{{}}, []int32{1, 3}, nil)
+	buffer.BufferTouches(1, []protocol.TouchFrame{{}}, []int32{1, 2, 3}, nil)
 	buffer.Flush()
 
 	mu.Lock()

@@ -76,7 +76,7 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 			user.SetGameTime(last.Time)
 		}
 		if len(room.MonitorIDs()) > 0 {
-			ctx.MonitorBuffer.BufferTouches(user.ID, cmd.Frames, room.MonitorIDs())
+			ctx.MonitorBuffer.BufferTouches(user.ID, cmd.Frames, room.MonitorIDs(), room)
 		}
 		if runtime.ReplayEnabled && ctx.State.ReplayRecorder != nil && room.ReplayEligible {
 			ctx.State.ReplayRecorder.AppendTouches(room.ID, user.ID, cmd.Frames)
@@ -92,7 +92,7 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 			return protocol.ServerCommand{}, nil
 		}
 		if len(room.MonitorIDs()) > 0 {
-			ctx.MonitorBuffer.BufferJudges(user.ID, cmd.Judges, room.MonitorIDs())
+			ctx.MonitorBuffer.BufferJudges(user.ID, cmd.Judges, room.MonitorIDs(), room)
 		}
 		if runtime.ReplayEnabled && ctx.State.ReplayRecorder != nil && room.ReplayEligible {
 			ctx.State.ReplayRecorder.AppendJudges(room.ID, user.ID, cmd.Judges)
@@ -271,6 +271,10 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 		room := ctx.RequireRoom()
 		if st.Logger != nil {
 			st.Logger.DebugL(runtime.ServerLang, "log-cancel-ready", map[string]string{"user": fmt.Sprintf("%d", user.ID), "name": user.GetName(), "room": string(room.ID)})
+		}
+		// If not in WaitForReady state, silently succeed (no-op)
+		if _, ok := room.State.(*game.StateWaitForReady); !ok {
+			return protocol.ServerCommand{Type: protocol.ServerCmdCancelReady, Result: protocol.Ok(struct{}{})}, nil
 		}
 		wasHost, err := room.CancelReady(user.ID)
 		if err != nil {

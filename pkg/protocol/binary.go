@@ -387,12 +387,18 @@ func Err[T any](err string) StringResult[T] {
 
 func uuidToU64Pair(uuid string) (high, low uint64) {
 	// Parse standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	// We need 16 bytes. Simple parser assuming valid format.
+	// Strict validation matching TypeScript uuid package behavior.
+	if len(uuid) != 36 {
+		panic(ErrUnexpectedEOF)
+	}
 	var b [16]byte
 	j := 0
-	for i := 0; i < len(uuid) && j < 16; i++ {
+	for i := 0; i < len(uuid); i++ {
 		c := uuid[i]
-		if c == '-' {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				panic(ErrUnexpectedEOF)
+			}
 			continue
 		}
 		var nibble byte
@@ -403,7 +409,7 @@ func uuidToU64Pair(uuid string) (high, low uint64) {
 		} else if c >= 'A' && c <= 'F' {
 			nibble = c - 'A' + 10
 		} else {
-			continue
+			panic(ErrUnexpectedEOF)
 		}
 		if j%2 == 0 {
 			b[j/2] = nibble << 4
@@ -411,6 +417,9 @@ func uuidToU64Pair(uuid string) (high, low uint64) {
 			b[j/2] |= nibble
 		}
 		j++
+	}
+	if j != 32 {
+		panic(ErrUnexpectedEOF)
 	}
 	// high = first 8 bytes, low = last 8 bytes (big endian within each half)
 	for i := 0; i < 8; i++ {

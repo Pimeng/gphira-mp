@@ -160,13 +160,11 @@ func (s *Session) handleAuthenticate(token string) error {
 	}
 
 	var existingSession *Session
-	var wasDangling bool
 	s.State.WithLock(func() {
 		if u := s.State.Users[info.ID]; u != nil {
 			if sess, ok := u.GetSession().(*Session); ok && sess != s {
 				existingSession = sess
 			}
-			wasDangling = !u.HasSession() && u.DangleRoom() != nil
 			u.SetSession(s)
 			u.SetIdentity(info.Name, info.Language)
 			s.user = u
@@ -189,14 +187,6 @@ func (s *Session) handleAuthenticate(token string) error {
 	})
 	if isBanned && s.user.GetRoom() != nil {
 		s.handleUserLeaveRoom(s.user, s.user.GetRoom())
-	}
-
-	// If the user was dangling, restore room state broadcast to notify others.
-	if wasDangling && s.user.GetRoom() != nil {
-		room := s.user.GetRoom()
-		s.State.Logger.InfoL(runtime.ServerLang, "log-user-reconnected", map[string]string{"session": s.ID, "user": s.user.GetName(), "room": string(room.ID)})
-		_ = s.broadcastRoom(room, protocol.ServerCommand{Type: protocol.ServerCmdOnJoinRoom, UserInfo: s.user.ToInfo()})
-		_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageJoinRoom, User: s.user.ID, Name: s.user.GetName()})
 	}
 
 	var clientRoom *protocol.ClientRoomState
@@ -395,10 +385,16 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 					_ = u.TrySend(cmd)
 				}
 			}
-			if msg.Type == protocol.MessageChat {
-				room.AddLog(msg.Content)
+			logText := game.FormatMessageForLog(msg, runtime.ServerLang, func(id int32) string {
+				if u := s.findUser(id); u != nil {
+					return u.GetName()
+				}
+				return ""
+			})
+			if logText != "" {
+				room.AddLog(logText)
 				if s.State.WSServer != nil {
-					s.State.WSServer.BroadcastRoomLog(room.ID, msg.Content, time.Now().UnixMilli())
+					s.State.WSServer.BroadcastRoomLog(room.ID, logText, time.Now().UnixMilli())
 				}
 			}
 			return nil
