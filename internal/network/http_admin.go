@@ -4,30 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
+	"os"
 	"strings"
 
+	"github.com/Pimeng/gphira-mp-next/internal/config"
 	"github.com/Pimeng/gphira-mp-next/internal/game"
 	"github.com/Pimeng/gphira-mp-next/internal/replay"
+	"github.com/Pimeng/gphira-mp-next/internal/utils"
 	"github.com/Pimeng/gphira-mp-next/pkg/protocol"
 	"github.com/Pimeng/gphira-mp-next/pkg/roomid"
+	"gopkg.in/yaml.v3"
 )
 
-// adminAuthMiddleware checks the X-Admin-Token header against the configured admin token.
+// adminAuthMiddleware checks the configured admin token or a temporary admin token.
 func (h *HTTPServer) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := r.Header.Get("X-Admin-Token")
-		if token == "" {
-			// Also check query parameter for websocket compatibility
-			token = r.URL.Query().Get("token")
-		}
-		runtime := h.state.SnapshotRuntime()
-		expected := runtime.Config.AdminToken
-		if expected == "" || token != expected {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{
-				"ok":    false,
-				"error": "unauthorized",
-			})
+		result := h.checkAdminRequest(r)
+		if !result.OK {
+			writeJSON(w, result.Status, map[string]any{"ok": false, "error": result.Error})
 			return
 		}
 		next(w, r)
@@ -36,6 +30,8 @@ func (h *HTTPServer) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc
 
 func (h *HTTPServer) registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/status", h.adminAuthMiddleware(h.handleAdminStatus))
+	mux.HandleFunc("/admin/replay/config", h.adminAuthMiddleware(h.handleAdminReplayConfig))
+	mux.HandleFunc("/admin/room-creation/config", h.adminAuthMiddleware(h.handleAdminRoomCreationConfig))
 	mux.HandleFunc("/admin/broadcast", h.adminAuthMiddleware(h.handleAdminBroadcast))
 	mux.HandleFunc("/admin/rooms", h.adminAuthMiddleware(h.handleAdminRooms))
 	mux.HandleFunc("/admin/rooms/", h.adminAuthMiddleware(h.handleAdminRoomDetail))
@@ -43,12 +39,114 @@ func (h *HTTPServer) registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/users/", h.adminAuthMiddleware(h.handleAdminUserDetail))
 	mux.HandleFunc("/admin/sessions", h.adminAuthMiddleware(h.handleAdminSessions))
 	mux.HandleFunc("/admin/logs", h.adminAuthMiddleware(h.handleAdminLogs))
+	mux.HandleFunc("/admin/log-rate", h.adminAuthMiddleware(h.handleAdminLogRate))
 	mux.HandleFunc("/admin/ban/user", h.adminAuthMiddleware(h.handleAdminBanUser))
 	mux.HandleFunc("/admin/ban/room", h.adminAuthMiddleware(h.handleAdminBanRoom))
 	mux.HandleFunc("/admin/ip-blacklist", h.adminAuthMiddleware(h.handleAdminIPBlacklist))
 	mux.HandleFunc("/admin/ip-blacklist/remove", h.adminAuthMiddleware(h.handleAdminIPBlacklistRemove))
 	mux.HandleFunc("/admin/ip-blacklist/clear", h.adminAuthMiddleware(h.handleAdminIPBlacklistClear))
 	mux.HandleFunc("/admin/contest/rooms/", h.adminAuthMiddleware(h.handleAdminContest))
+}
+
+func decodeEnabled(r *http.Request) (bool, bool) {
+	var raw map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return false, false
+	}
+	v, ok := raw["enabled"]
+	if !ok {
+		return false, false
+	}
+	switch x := v.(type) {
+	case bool:
+		return x, true
+	case string:
+		return x != "", true
+	case float64:
+		return x != 0, true
+	case nil:
+		return false, true
+	default:
+		return true, true
+	}
+}
+
+func (h *HTTPServer) handleAdminRoomCreationConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		runtime := h.state.SnapshotRuntime()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": runtime.RoomCreationEnabled})
+	case http.MethodPost:
+		enabled, ok := decodeEnabled(r)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-enabled"})
+			return
+		}
+		h.state.WithLock(func() {
+			h.state.RoomCreationEnabled = enabled
+			h.state.Config.RoomCreationEnabled = config.Bool(enabled)
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": enabled})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *HTTPServer) handleAdminReplayConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		runtime := h.state.SnapshotRuntime()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": runtime.ReplayEnabled})
+	case http.MethodPost:
+		enabled, ok := decodeEnabled(r)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-enabled"})
+			return
+		}
+		var roomsToEnd []roomid.RoomID
+		h.state.WithLock(func() {
+			h.state.ReplayEnabled = enabled
+			h.state.Config.ReplayEnabled = config.Bool(enabled)
+			if !enabled {
+				roomsToEnd = make([]roomid.RoomID, 0, len(h.state.Rooms))
+				for rid := range h.state.Rooms {
+					roomsToEnd = append(roomsToEnd, rid)
+				}
+			}
+			for _, room := range h.state.Rooms {
+				room.RefreshLive(enabled)
+			}
+		})
+		if !enabled && h.state.ReplayRecorder != nil {
+			for _, rid := range roomsToEnd {
+				h.state.ReplayRecorder.EndRoom(rid)
+			}
+		}
+		if err := h.persistReplayEnabled(enabled); err != nil && h.state.Logger != nil {
+			h.state.Logger.Warn("failed to persist replay config", "err", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": enabled})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *HTTPServer) persistReplayEnabled(enabled bool) error {
+	if h.state.ConfigPath == "" {
+		return nil
+	}
+	configObj := map[string]any{}
+	if data, err := os.ReadFile(h.state.ConfigPath); err == nil && len(data) > 0 {
+		_ = yaml.Unmarshal(data, &configObj)
+	}
+	delete(configObj, "replay_enabled")
+	delete(configObj, "replayEnabled")
+	configObj["REPLAY_ENABLED"] = enabled
+	data, err := yaml.Marshal(configObj)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(h.state.ConfigPath, data, 0644)
 }
 
 func (h *HTTPServer) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +192,11 @@ func (h *HTTPServer) handleAdminBroadcast(w http.ResponseWriter, r *http.Request
 
 	msg := strings.TrimSpace(req.Message)
 	if msg == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "empty-message"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-message"})
+		return
+	}
+	if len(msg) > 200 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "message-too-long"})
 		return
 	}
 
@@ -103,19 +205,29 @@ func (h *HTTPServer) handleAdminBroadcast(w http.ResponseWriter, r *http.Request
 		Message: protocol.Message{
 			Type:    protocol.MessageChat,
 			User:    0,
-			Content: "[Broadcast] " + msg,
+			Content: msg,
 		},
 	}
 
+	var roomIDs []roomid.RoomID
 	h.state.WithRLock(func() {
-		for _, sess := range h.state.Sessions {
-			if s, ok := sess.(*Session); ok {
-				_ = s.Send(cmd)
-			}
+		roomIDs = make([]roomid.RoomID, 0, len(h.state.Rooms))
+		for rid := range h.state.Rooms {
+			roomIDs = append(roomIDs, rid)
 		}
 	})
+	for _, rid := range roomIDs {
+		var room *game.Room
+		h.state.WithRLock(func() {
+			room = h.state.Rooms[rid]
+		})
+		if room != nil {
+			room.AddLog(msg)
+			_ = h.broadcastRoomAll(rid, cmd)
+		}
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rooms": len(roomIDs)})
 }
 
 func (h *HTTPServer) handleAdminRooms(w http.ResponseWriter, r *http.Request) {
@@ -124,64 +236,12 @@ func (h *HTTPServer) handleAdminRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type contestInfo struct {
-		WhitelistCount int32   `json:"whitelist_count"`
-		Whitelist      []int32 `json:"whitelist"`
-		ManualStart    bool    `json:"manual_start"`
-		AutoDisband    bool    `json:"auto_disband"`
-	}
-
-	type roomDetail struct {
-		ID       string       `json:"id"`
-		HostID   int32        `json:"host_id"`
-		Users    []int32      `json:"users"`
-		Monitors []int32      `json:"monitors"`
-		State    string       `json:"state"`
-		Locked   bool         `json:"locked"`
-		Cycle    bool         `json:"cycle"`
-		Contest  *contestInfo `json:"contest,omitempty"`
-	}
-
-	var details []roomDetail
-	h.state.WithRLock(func() {
-		for rid, room := range h.state.Rooms {
-			stateStr := "select_chart"
-			switch room.State.(type) {
-			case *game.StateWaitForReady:
-				stateStr = "waiting_for_ready"
-			case *game.StatePlaying:
-				stateStr = "playing"
-			}
-
-			d := roomDetail{
-				ID:       string(rid),
-				HostID:   room.HostID,
-				Users:    room.UserIDs(),
-				Monitors: room.MonitorIDs(),
-				State:    stateStr,
-				Locked:   room.Locked,
-				Cycle:    room.Cycle,
-			}
-			if room.Contest != nil {
-				whitelist := make([]int32, 0, len(room.Contest.Whitelist))
-				for id := range room.Contest.Whitelist {
-					whitelist = append(whitelist, id)
-				}
-				sort.Slice(whitelist, func(i, j int) bool { return whitelist[i] < whitelist[j] })
-				d.Contest = &contestInfo{
-					WhitelistCount: int32(len(whitelist)),
-					Whitelist:      whitelist,
-					ManualStart:    room.Contest.ManualStart,
-					AutoDisband:    room.Contest.AutoDisband,
-				}
-			}
-			details = append(details, d)
-		}
-	})
+	details := buildAdminRoomsData(h.state)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":    true,
-		"rooms": details,
+		"ok":          true,
+		"total_rooms": len(details),
+		"rooms":       details,
 	})
 }
 
@@ -555,6 +615,19 @@ func (h *HTTPServer) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *HTTPServer) handleAdminLogRate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var rate float64
+	if h.state.Logger != nil {
+		rate = h.state.Logger.GetCurrentRate()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rate": rate})
+}
+
 // ========== Admin Ban ==========
 
 func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) {
@@ -770,6 +843,104 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// POST /admin/users/:id/move
+	if r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "move" {
+		var req struct {
+			RoomID  string `json:"roomId"`
+			Monitor bool   `json:"monitor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+			return
+		}
+		targetID, err := roomid.Parse(req.RoomID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-room-id"})
+			return
+		}
+
+		var user *game.User
+		var from *game.Room
+		var to *game.Room
+		h.state.WithRLock(func() {
+			user = h.state.Users[userID]
+			if user != nil {
+				from = user.GetRoom()
+			}
+			to = h.state.Rooms[targetID]
+		})
+		if user == nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "user-not-found"})
+			return
+		}
+		if user.HasSession() {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user-must-be-disconnected"})
+			return
+		}
+		if from == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user-not-in-room"})
+			return
+		}
+		if from.Snapshot().State.Type != "select_chart" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "cannot-move-while-playing"})
+			return
+		}
+		if to == nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+			return
+		}
+		if to.Snapshot().State.Type != "select_chart" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "target-room-not-idle"})
+			return
+		}
+
+		runtime := h.state.SnapshotRuntime()
+		if err := to.ValidateJoin(user.ID, req.Monitor, runtime.Config.Monitors, nil); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		if !to.AddUser(user.ID, req.Monitor) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "room-full"})
+			return
+		}
+
+		participantIDs := from.AllParticipantIDs()
+		shouldDisband := from.OnUserLeave(user, &game.RoomCallbacks{
+			Broadcast: func(cmd protocol.ServerCommand) error {
+				for _, id := range participantIDs {
+					if u := h.findUser(id); u != nil {
+						_ = u.TrySend(cmd)
+					}
+				}
+				return nil
+			},
+			UsersById:        h.findUser,
+			PickRandomUserId: utils.RandomPickInt32,
+			Lang:             runtime.ServerLang,
+			Logger:           h.state.Logger,
+			NotifyWebSocket: func(rid roomid.RoomID) {
+				if h.state.WSServer != nil {
+					h.state.WSServer.BroadcastRoomUpdate(rid, nil)
+				}
+			},
+		})
+		if shouldDisband {
+			h.state.WithLock(func() {
+				delete(h.state.Rooms, from.ID)
+			})
+		} else {
+			from.RefreshLive(runtime.ReplayEnabled)
+		}
+		user.SetRoom(to, req.Monitor)
+		to.RefreshLive(runtime.ReplayEnabled)
+		if h.state.WSServer != nil {
+			h.state.WSServer.BroadcastRoomUpdate(to.ID, nil)
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
 	http.Error(w, "Not Found", http.StatusNotFound)
 }
 
@@ -787,6 +958,36 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 	rid, err := roomid.Parse(parts[0])
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-room-id"})
+		return
+	}
+
+	// POST /admin/rooms/:id/max_users
+	if r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "max_users" {
+		var req struct {
+			MaxUsers int `json:"maxUsers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+			return
+		}
+		if req.MaxUsers < 1 || req.MaxUsers > 64 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-max-users"})
+			return
+		}
+		var updated bool
+		h.state.WithLock(func() {
+			room := h.state.Rooms[rid]
+			if room == nil {
+				return
+			}
+			room.SetMaxUsers(req.MaxUsers)
+			updated = true
+		})
+		if !updated {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "roomid": string(rid), "max_users": req.MaxUsers})
 		return
 	}
 
@@ -842,6 +1043,10 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 		msg := strings.TrimSpace(req.Message)
 		if msg == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "empty-message"})
+			return
+		}
+		if len(msg) > 200 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "message-too-long"})
 			return
 		}
 

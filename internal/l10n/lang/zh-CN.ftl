@@ -149,6 +149,25 @@ cli-restart-failed=重启失败：{ $err }
 cli-restarted=服务端已重启
 cli-no-active-rooms=没有活跃房间。
 cli-no-online-users=没有在线用户。
+cli-none=无
+cli-yes=是
+cli-no=否
+cli-state-on=开启
+cli-state-off=关闭
+cli-user-status-online=在线
+cli-user-status-offline=离线
+cli-user-role-monitor=观战
+cli-user-role-player=玩家
+cli-usage-user=用法：user <用户ID>
+cli-user-info-header=用户信息：
+cli-user-info-id=  ID：{ $id }
+cli-user-info-name=  名称：{ $name }
+cli-user-info-status=  状态：{ $status }
+cli-user-info-role=  角色：{ $role }
+cli-user-info-room=  房间：{ $room }
+cli-user-info-banned=  封禁：{ $banned }
+cli-user-info-game-time=  游戏时间：{ $time }
+cli-user-info-language=  语言：{ $lang }
 cli-usage-kick=用法：kick <用户ID>
 cli-invalid-user-id=无效的用户ID
 cli-kicked-user=已踢出用户 { $id }（{ $name }）
@@ -159,8 +178,49 @@ cli-usage-unban=用法：unban <用户ID>
 cli-unbanned-user=已解封用户 { $id }
 cli-no-banned-users=没有封禁用户。
 cli-banned-users=封禁用户列表：
+cli-usage-banroom=用法：banroom <用户ID> <房间ID>
+cli-usage-unbanroom=用法：unbanroom <用户ID> <房间ID>
+cli-room-user-banned=已禁止用户 { $userId } 进入房间 { $room }
+cli-room-user-unbanned=已解除用户 { $userId } 对房间 { $room } 的禁入
+cli-message-empty=消息不能为空
+cli-message-too-long=消息过长（最多 { $max } 字符）
 cli-usage-broadcast=用法：broadcast <消息>
 cli-broadcast-sent=广播已发送。
+cli-usage-roomsay=用法：roomsay <房间ID> <消息>
+cli-room-message-sent=已向房间 { $room } 发送消息
+cli-usage-maxusers=用法：maxusers <房间ID> <人数>
+cli-bad-max-users=无效的人数（1-64）
+cli-room-max-users-set=已设置房间 { $room } 最大人数为 { $count }
+cli-usage-disband=用法：disband <房间ID>
+cli-room-disbanded=已解散房间 { $room }
+room-disbanded-by-admin=房间已被管理员解散
+cli-usage-replay=用法：replay <on|off|status>
+cli-replay-status=回放录制状态：{ $state }
+cli-replay-toggled-on=回放录制已开启
+cli-replay-toggled-off=回放录制已关闭
+cli-usage-roomcreation=用法：roomcreation <on|off|status>
+cli-room-creation-status=房间创建状态：{ $state }
+cli-room-creation-toggled-on=房间创建已开启
+cli-room-creation-toggled-off=房间创建已关闭
+cli-usage-ipblacklist=用法：ipblacklist <list|remove|clear>
+cli-usage-ipblacklist-remove=用法：ipblacklist remove <IP>
+cli-blacklist-empty=IP 黑名单为空
+cli-blacklist-header=IP 黑名单（共 { $count } 个）：
+cli-blacklist-line={ $ip }（{ $minutes } 分钟后过期）
+cli-blacklist-removed=已从黑名单移除：{ $ip }
+cli-blacklist-cleared=已清空 IP 黑名单
+cli-ipblacklist-unknown-subcommand=未知子命令。可用：list、remove、clear
+cli-usage-approve=用法：approve <ssid>（支持完整 ssid 或前缀短码）
+cli-usage-deny=用法：deny <ssid>（支持完整 ssid 或前缀短码）
+cli-approve-not-found=未找到匹配的提权申请：{ $input }
+cli-approve-ambiguous=短码 { $input } 匹配到多个提权申请，请提供更长的前缀
+cli-approve-expired=提权申请 { $ssid } 已过期
+cli-approve-already-handled=提权申请 { $ssid } 已处于 { $status } 状态，无法再次处理
+cli-approve-success=已批准提权申请 { $ssid }（请求IP：{ $ip }），临时 TOKEN 已签发
+cli-deny-success=已拒绝提权申请 { $ssid }（请求IP：{ $ip }）
+cli-pending-empty=当前没有待处理的 CLI 提权申请
+cli-pending-header=待处理的 CLI 提权申请（共 { $count } 个）：
+cli-pending-line=[{ $ssid }] 完整 ssid: { $full } | 请求IP: { $ip } | 剩余 { $seconds } 秒
 cli-usage-contest=用法：contest <房间ID> <enable|disable|whitelist|start> [参数...]
 cli-invalid-room-id=无效的房间ID
 cli-unknown-contest-subcommand=未知比赛子命令：{ $cmd }
@@ -186,11 +246,23 @@ cli-help=可用命令：
   help, h                  显示此帮助信息
   list, rooms              列出所有房间
   users                    列出所有在线用户
+  user <id>                查看用户详情
   kick <id>                按ID踢出用户
   ban <id>                 按ID封禁用户
   unban <id>               按ID解封用户
   banlist                  列出封禁用户
+  banroom <id> <room>      禁止用户进入指定房间
+  unbanroom <id> <room>    解除用户的房间禁入
   broadcast <msg>          向所有用户广播消息
+  roomsay <room> <msg>     向指定房间发送消息
+  maxusers <room> <count>  设置房间最大人数
+  disband <room>           解散房间
+  replay <on|off|status>   切换回放录制
+  roomcreation <...>       切换房间创建
+  ipblacklist <...>        管理 IP 黑名单
+  approve <ssid>           批准 CLI 管理员提权申请
+  deny <ssid>              拒绝 CLI 管理员提权申请
+  pending                  列出待处理的 CLI 提权申请
   contest <room> enable    为房间启用比赛模式
   contest <room> disable   为房间禁用比赛模式
   contest <room> whitelist <id>...

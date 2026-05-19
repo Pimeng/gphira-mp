@@ -23,8 +23,24 @@ type adminDataFile struct {
 	BannedRoomUsers map[string][]int32 `json:"bannedRoomUsers"`
 }
 
+type TempAdminToken struct {
+	IP        string
+	ExpiresAt int64
+	Banned    bool
+}
+
+type CLIApprovalSession struct {
+	IP             string
+	ExpiresAt      int64
+	Status         string
+	Token          string
+	TokenExpiresAt int64
+	RequestedAt    int64
+}
+
 type ServerState struct {
 	Config              *config.ServerConfig
+	ConfigPath          string
 	Logger              *utils.Logger
 	ServerName          string
 	ServerLang          *l10n.Language
@@ -40,6 +56,8 @@ type ServerState struct {
 	UploadedReplayMeta  *utils.UploadedReplayMeta
 	AutoUploadConfigs   *utils.AutoUploadConfigs
 	AutoUploadCallback  func(userID int32, chartID int32, timestamp int64, recordID int32)
+	TempAdminTokens     map[string]*TempAdminToken
+	CLIApprovalSessions map[string]*CLIApprovalSession
 	WSServer            interface {
 		BroadcastRoomUpdate(roomID roomid.RoomID, data any)
 		BroadcastRoomLog(roomID roomid.RoomID, message string, timestamp int64)
@@ -74,6 +92,8 @@ func NewServerState(cfg *config.ServerConfig, logger *utils.Logger, serverName, 
 		ChartCache:          utils.NewChartCache(200, 60*time.Minute),
 		UploadedReplayMeta:  utils.NewUploadedReplayMeta(),
 		AutoUploadConfigs:   utils.NewAutoUploadConfigs(),
+		TempAdminTokens:     make(map[string]*TempAdminToken),
+		CLIApprovalSessions: make(map[string]*CLIApprovalSession),
 		adminDataPath:       adminDataPath,
 	}
 	if s.ServerName == "" {

@@ -149,6 +149,25 @@ cli-restart-failed=Restart failed: { $err }
 cli-restarted=Server restarted
 cli-no-active-rooms=No active rooms.
 cli-no-online-users=No online users.
+cli-none=None
+cli-yes=Yes
+cli-no=No
+cli-state-on=Enabled
+cli-state-off=Disabled
+cli-user-status-online=Online
+cli-user-status-offline=Offline
+cli-user-role-monitor=Monitor
+cli-user-role-player=Player
+cli-usage-user=Usage: user <user-id>
+cli-user-info-header=User info:
+cli-user-info-id=  ID: { $id }
+cli-user-info-name=  Name: { $name }
+cli-user-info-status=  Status: { $status }
+cli-user-info-role=  Role: { $role }
+cli-user-info-room=  Room: { $room }
+cli-user-info-banned=  Banned: { $banned }
+cli-user-info-game-time=  Game time: { $time }
+cli-user-info-language=  Language: { $lang }
 cli-usage-kick=Usage: kick <user-id>
 cli-invalid-user-id=Invalid user ID
 cli-kicked-user=Kicked user { $id } ({ $name })
@@ -159,8 +178,49 @@ cli-usage-unban=Usage: unban <user-id>
 cli-unbanned-user=Unbanned user { $id }
 cli-no-banned-users=No banned users.
 cli-banned-users=Banned users:
+cli-usage-banroom=Usage: banroom <user-id> <room-id>
+cli-usage-unbanroom=Usage: unbanroom <user-id> <room-id>
+cli-room-user-banned=Banned user { $userId } from room { $room }
+cli-room-user-unbanned=Unbanned user { $userId } from room { $room }
+cli-message-empty=Message cannot be empty
+cli-message-too-long=Message too long (max { $max } characters)
 cli-usage-broadcast=Usage: broadcast <message>
 cli-broadcast-sent=Broadcast sent.
+cli-usage-roomsay=Usage: roomsay <room-id> <message>
+cli-room-message-sent=Message sent to room { $room }
+cli-usage-maxusers=Usage: maxusers <room-id> <count>
+cli-bad-max-users=Invalid count (1-64)
+cli-room-max-users-set=Set room { $room } max users to { $count }
+cli-usage-disband=Usage: disband <room-id>
+cli-room-disbanded=Disbanded room { $room }
+room-disbanded-by-admin=Room disbanded by admin
+cli-usage-replay=Usage: replay <on|off|status>
+cli-replay-status=Replay recording: { $state }
+cli-replay-toggled-on=Replay recording enabled
+cli-replay-toggled-off=Replay recording disabled
+cli-usage-roomcreation=Usage: roomcreation <on|off|status>
+cli-room-creation-status=Room creation: { $state }
+cli-room-creation-toggled-on=Room creation enabled
+cli-room-creation-toggled-off=Room creation disabled
+cli-usage-ipblacklist=Usage: ipblacklist <list|remove|clear>
+cli-usage-ipblacklist-remove=Usage: ipblacklist remove <ip>
+cli-blacklist-empty=IP blacklist is empty
+cli-blacklist-header=IP Blacklist ({ $count }):
+cli-blacklist-line={ $ip } (expires in { $minutes } minutes)
+cli-blacklist-removed=Removed from blacklist: { $ip }
+cli-blacklist-cleared=Cleared IP blacklist
+cli-ipblacklist-unknown-subcommand=Unknown subcommand. Available: list, remove, clear
+cli-usage-approve=Usage: approve <ssid> (full ssid or prefix shortcode)
+cli-usage-deny=Usage: deny <ssid> (full ssid or prefix shortcode)
+cli-approve-not-found=No pending elevation request matched: { $input }
+cli-approve-ambiguous=Shortcode { $input } matches multiple elevation requests; please use a longer prefix
+cli-approve-expired=Elevation request { $ssid } has expired
+cli-approve-already-handled=Elevation request { $ssid } is already in { $status } state and cannot be handled again
+cli-approve-success=Approved elevation request { $ssid } (requester IP: { $ip }); temporary TOKEN issued
+cli-deny-success=Denied elevation request { $ssid } (requester IP: { $ip })
+cli-pending-empty=No pending CLI elevation requests
+cli-pending-header=Pending CLI elevation requests ({ $count }):
+cli-pending-line=[{ $ssid }] full ssid: { $full } | IP: { $ip } | remaining { $seconds }s
 cli-usage-contest=Usage: contest <room-id> <enable|disable|whitelist|start> [args...]
 cli-invalid-room-id=Invalid room ID
 cli-unknown-contest-subcommand=Unknown contest subcommand: { $cmd }
@@ -186,11 +246,23 @@ cli-help=Available commands:
   help, h                  Show this help message
   list, rooms              List all rooms
   users                    List all online users
+  user <id>                Show user details
   kick <id>                Kick a user by ID
   ban <id>                 Ban a user by ID
   unban <id>               Unban a user by ID
   banlist                  List banned users
+  banroom <id> <room>      Ban a user from a room
+  unbanroom <id> <room>    Remove a room ban
   broadcast <msg>          Broadcast a message to all users
+  roomsay <room> <msg>     Send a message to one room
+  maxusers <room> <count>  Set room max users
+  disband <room>           Disband a room
+  replay <on|off|status>   Toggle replay recording
+  roomcreation <...>       Toggle room creation
+  ipblacklist <...>        Manage IP blacklist
+  approve <ssid>           Approve a CLI admin elevation request
+  deny <ssid>              Deny a CLI admin elevation request
+  pending                  List pending CLI elevation requests
   contest <room> enable    Enable contest mode for a room
   contest <room> disable   Disable contest mode for a room
   contest <room> whitelist <id>...

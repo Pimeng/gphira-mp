@@ -50,6 +50,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 		rateLimiter: NewRateLimiter(time.Minute, 60),
 		sessions:    make(map[string]*Session),
 	}
+	s.state.ConfigPath = configPath
 
 	if config.DerefBool(cfg.ReplayEnabled, false) {
 		s.state.ReplayRecorder = replay.NewRecorder(cfg.ReplayBaseDir, logger)

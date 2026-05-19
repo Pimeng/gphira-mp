@@ -17,16 +17,18 @@ var upgrader = websocket.Upgrader{
 
 // WSClient represents a connected WebSocket client.
 type WSClient struct {
-	conn    *websocket.Conn
-	roomID  roomid.RoomID
-	userID  int32
-	isAdmin bool
-	isAlive bool
-	closed  bool
-	send    chan []byte
-	server  *WSServer
-	writeMu sync.Mutex
-	stateMu sync.RWMutex
+	conn              *websocket.Conn
+	roomID            roomid.RoomID
+	userID            int32
+	isAdmin           bool
+	clientIP          string
+	isAlive           bool
+	closed            bool
+	lastAdminSnapshot string
+	send              chan []byte
+	server            *WSServer
+	writeMu           sync.Mutex
+	stateMu           sync.RWMutex
 }
 
 // WSServer manages WebSocket connections and broadcasts.
@@ -89,10 +91,11 @@ func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := &WSClient{
-		conn:    conn,
-		isAlive: true,
-		send:    make(chan []byte, 64),
-		server:  s,
+		conn:     conn,
+		clientIP: s.state.clientIPFromRequest(r),
+		isAlive:  true,
+		send:     make(chan []byte, 64),
+		server:   s,
 	}
 	if s.state.state.Logger != nil {
 		s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-connected", map[string]string{"remote": conn.RemoteAddr().String()})
@@ -107,6 +110,15 @@ func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *WSServer) BroadcastRoomUpdate(roomID roomid.RoomID, data any) {
 	select {
 	case s.broadcast <- wsBroadcastMsg{roomID: roomID, msgType: "room_update", data: data}:
+	default:
+	}
+	s.BroadcastAdminUpdate()
+}
+
+// BroadcastAdminUpdate sends a deduplicated admin room snapshot to admin subscribers.
+func (s *WSServer) BroadcastAdminUpdate() {
+	select {
+	case s.broadcast <- wsBroadcastMsg{msgType: "admin_update"}:
 	default:
 	}
 }
@@ -141,28 +153,29 @@ func (s *WSServer) run() {
 			s.removeClient(client)
 
 		case msg := <-s.broadcast:
-			s.mu.RLock()
-			subs := s.rooms[msg.roomID]
-			if len(subs) == 0 && len(s.admins) == 0 {
-				s.mu.RUnlock()
-				continue
-			}
-			payload, _ := json.Marshal(map[string]any{"type": msg.msgType, "data": msg.data})
-			count := 0
-			for client := range subs {
-				if client.enqueue(payload) {
-					count++
+			switch msg.msgType {
+			case "room_update":
+				data := msg.data
+				if data == nil {
+					data = buildRoomUpdateData(s.state.state, msg.roomID)
 				}
-			}
-			for client := range s.admins {
-				if client.enqueue(payload) {
-					count++
+				if data == nil {
+					continue
 				}
+				payload, _ := json.Marshal(map[string]any{"type": msg.msgType, "data": data})
+				sent, subs := s.broadcastToRoom(msg.roomID, payload)
+				if s.state.state.Logger != nil {
+					s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-broadcast", map[string]string{"room": string(msg.roomID), "type": msg.msgType, "subs": fmt.Sprintf("%d", subs), "sent": fmt.Sprintf("%d", sent)})
+				}
+			case "room_log":
+				payload, _ := json.Marshal(map[string]any{"type": msg.msgType, "data": msg.data})
+				sent, subs := s.broadcastToRoom(msg.roomID, payload)
+				if s.state.state.Logger != nil {
+					s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-broadcast", map[string]string{"room": string(msg.roomID), "type": msg.msgType, "subs": fmt.Sprintf("%d", subs), "sent": fmt.Sprintf("%d", sent)})
+				}
+			case "admin_update":
+				s.broadcastAdminSnapshot(false)
 			}
-			if s.state.state.Logger != nil {
-				s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-broadcast", map[string]string{"room": string(msg.roomID), "type": msg.msgType, "subs": fmt.Sprintf("%d", len(subs)), "sent": fmt.Sprintf("%d", count)})
-			}
-			s.mu.RUnlock()
 
 		case <-s.stop:
 			s.mu.Lock()
@@ -176,6 +189,58 @@ func (s *WSServer) run() {
 			return
 		}
 	}
+}
+
+func (s *WSServer) broadcastToRoom(roomID roomid.RoomID, payload []byte) (sent int, subs int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	subscribers := s.rooms[roomID]
+	subs = len(subscribers)
+	for client := range subscribers {
+		if client.enqueue(payload) {
+			sent++
+		}
+	}
+	return sent, subs
+}
+
+func (s *WSServer) broadcastAdminSnapshot(force bool) {
+	rooms := buildAdminRoomsData(s.state.state)
+	snapshotBytes, _ := json.Marshal(rooms)
+	snapshot := string(snapshotBytes)
+
+	s.mu.RLock()
+	clients := make([]*WSClient, 0, len(s.admins))
+	for client := range s.admins {
+		clients = append(clients, client)
+	}
+	s.mu.RUnlock()
+
+	for _, client := range clients {
+		s.sendAdminUpdateToClient(client, rooms, snapshot, force)
+	}
+}
+
+func (s *WSServer) sendAdminUpdateToClient(client *WSClient, rooms []adminRoomData, snapshot string, force bool) {
+	client.stateMu.Lock()
+	if client.closed || !client.isAdmin || (!force && client.lastAdminSnapshot == snapshot) {
+		client.stateMu.Unlock()
+		return
+	}
+	client.lastAdminSnapshot = snapshot
+	client.stateMu.Unlock()
+
+	payload, _ := json.Marshal(map[string]any{
+		"type": "admin_update",
+		"data": map[string]any{
+			"timestamp": time.Now().UnixMilli(),
+			"changes": map[string]any{
+				"rooms":       rooms,
+				"total_rooms": len(rooms),
+			},
+		},
+	})
+	_ = client.enqueue(payload)
 }
 
 func (s *WSServer) removeClient(client *WSClient) {
@@ -232,6 +297,9 @@ func (c *WSClient) consumeAliveForHeartbeat() bool {
 func (c *WSClient) setAdmin(v bool) {
 	c.stateMu.Lock()
 	c.isAdmin = v
+	if !v {
+		c.lastAdminSnapshot = ""
+	}
 	c.stateMu.Unlock()
 }
 
@@ -353,6 +421,7 @@ func (c *WSClient) readPump() {
 				c.sendJSON(map[string]any{"type": "error", "message": "invalid-room-id"})
 				continue
 			}
+			subscribed := false
 			c.server.state.state.WithRLock(func() {
 				_, exists := c.server.state.state.Rooms[rid]
 				if !exists {
@@ -373,7 +442,13 @@ func (c *WSClient) readPump() {
 				c.server.rooms[rid][c] = struct{}{}
 				c.server.mu.Unlock()
 				c.sendJSON(map[string]any{"type": "subscribed", "roomId": msg.RoomID})
+				subscribed = true
 			})
+			if subscribed {
+				if data := buildRoomUpdateData(c.server.state.state, rid); data != nil {
+					c.sendJSON(map[string]any{"type": "room_update", "data": data})
+				}
+			}
 
 		case "unsubscribe":
 			c.server.mu.Lock()
@@ -394,18 +469,28 @@ func (c *WSClient) readPump() {
 			if c.server.state.state.Logger != nil {
 				c.server.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-admin-subscribe", nil)
 			}
-			token := msg.Token
-			runtime := c.server.state.state.SnapshotRuntime()
-			expected := runtime.Config.AdminToken
-			if expected == "" || token != expected {
+			if !c.server.state.adminTokenStringOK(msg.Token, c.clientIP) {
 				c.sendJSON(map[string]any{"type": "error", "message": "unauthorized"})
 				continue
 			}
-			c.setAdmin(true)
+			c.stateMu.Lock()
+			c.isAdmin = true
+			c.lastAdminSnapshot = ""
+			c.stateMu.Unlock()
 			c.server.mu.Lock()
 			c.server.admins[c] = struct{}{}
 			c.server.mu.Unlock()
 			c.sendJSON(map[string]any{"type": "admin_subscribed"})
+			rooms := buildAdminRoomsData(c.server.state.state)
+			snapshotBytes, _ := json.Marshal(rooms)
+			c.server.sendAdminUpdateToClient(c, rooms, string(snapshotBytes), true)
+
+		case "admin_unsubscribe":
+			c.setAdmin(false)
+			c.server.mu.Lock()
+			delete(c.server.admins, c)
+			c.server.mu.Unlock()
+			c.sendJSON(map[string]any{"type": "admin_unsubscribed"})
 		}
 	}
 }

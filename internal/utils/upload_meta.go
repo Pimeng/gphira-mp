@@ -64,6 +64,52 @@ func (m *UploadedReplayMeta) Get(userID, chartID int32) []*UploadedReplayMetaEnt
 	return out
 }
 
+// GetUser returns a copy of all uploaded replay metadata for a user.
+func (m *UploadedReplayMeta) GetUser(userID int32) map[int32][]*UploadedReplayMetaEntry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	chartMap, ok := m.data[userID]
+	if !ok {
+		return nil
+	}
+	out := make(map[int32][]*UploadedReplayMetaEntry, len(chartMap))
+	for chartID, list := range chartMap {
+		copied := make([]*UploadedReplayMetaEntry, len(list))
+		copy(copied, list)
+		out[chartID] = copied
+	}
+	return out
+}
+
+// Delete removes one uploaded replay metadata entry.
+func (m *UploadedReplayMeta) Delete(userID, chartID int32, timestamp int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	chartMap, ok := m.data[userID]
+	if !ok {
+		return false
+	}
+	list := chartMap[chartID]
+	for i, entry := range list {
+		if entry.Timestamp != timestamp {
+			continue
+		}
+		list = append(list[:i], list[i+1:]...)
+		if len(list) == 0 {
+			delete(chartMap, chartID)
+		} else {
+			chartMap[chartID] = list
+		}
+		if len(chartMap) == 0 {
+			delete(m.data, userID)
+		}
+		return true
+	}
+	return false
+}
+
 // AutoUploadConfigs tracks per-user auto-upload visibility preferences.
 type AutoUploadConfigs struct {
 	mu sync.RWMutex

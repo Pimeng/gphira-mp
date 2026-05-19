@@ -53,6 +53,35 @@ type Room struct {
 
 const maxRecentLogs = 50
 
+type RoomStateSnapshot struct {
+	Type       string
+	ReadyUsers []int32
+	Results    map[int32]RecordData
+	Aborted    []int32
+}
+
+type ContestSnapshot struct {
+	Whitelist   []int32
+	ManualStart bool
+	AutoDisband bool
+}
+
+type RoomSnapshot struct {
+	ID             roomid.RoomID
+	MaxUsers       int
+	ReplayEligible bool
+	HostID         int32
+	State          RoomStateSnapshot
+	Live           bool
+	Locked         bool
+	Cycle          bool
+	Contest        *ContestSnapshot
+	Chart          *Chart
+	Users          []int32
+	Monitors       []int32
+	RecentLogs     []RoomLog
+}
+
 func NewRoom(id roomid.RoomID, hostID int32, maxUsers int, replayEligible bool) *Room {
 	r := &Room{
 		ID:             id,
@@ -146,6 +175,71 @@ func (r *Room) AllParticipantIDs() []int32 {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.allParticipantIDsLocked()
+}
+
+func (r *Room) Snapshot() RoomSnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	snap := RoomSnapshot{
+		ID:             r.ID,
+		MaxUsers:       r.MaxUsers,
+		ReplayEligible: r.ReplayEligible,
+		HostID:         r.HostID,
+		Live:           r.Live,
+		Locked:         r.Locked,
+		Cycle:          r.Cycle,
+		Users:          r.userIDsLocked(),
+		Monitors:       r.monitorIDsLocked(),
+		RecentLogs:     make([]RoomLog, len(r.recentLogs)),
+	}
+	sort.Slice(snap.Users, func(i, j int) bool { return snap.Users[i] < snap.Users[j] })
+	sort.Slice(snap.Monitors, func(i, j int) bool { return snap.Monitors[i] < snap.Monitors[j] })
+	copy(snap.RecentLogs, r.recentLogs)
+
+	if r.Chart != nil {
+		chart := *r.Chart
+		snap.Chart = &chart
+	}
+	if r.Contest != nil {
+		whitelist := make([]int32, 0, len(r.Contest.Whitelist))
+		for id := range r.Contest.Whitelist {
+			whitelist = append(whitelist, id)
+		}
+		sort.Slice(whitelist, func(i, j int) bool { return whitelist[i] < whitelist[j] })
+		snap.Contest = &ContestSnapshot{
+			Whitelist:   whitelist,
+			ManualStart: r.Contest.ManualStart,
+			AutoDisband: r.Contest.AutoDisband,
+		}
+	}
+
+	switch st := r.State.(type) {
+	case *StateWaitForReady:
+		snap.State.Type = "waiting_for_ready"
+		snap.State.ReadyUsers = make([]int32, 0, len(st.Started))
+		for id := range st.Started {
+			snap.State.ReadyUsers = append(snap.State.ReadyUsers, id)
+		}
+		sort.Slice(snap.State.ReadyUsers, func(i, j int) bool { return snap.State.ReadyUsers[i] < snap.State.ReadyUsers[j] })
+	case *StatePlaying:
+		snap.State.Type = "playing"
+		snap.State.Results = make(map[int32]RecordData, len(st.Results))
+		for id, rec := range st.Results {
+			if rec != nil {
+				snap.State.Results[id] = *rec
+			}
+		}
+		snap.State.Aborted = make([]int32, 0, len(st.Aborted))
+		for id := range st.Aborted {
+			snap.State.Aborted = append(snap.State.Aborted, id)
+		}
+		sort.Slice(snap.State.Aborted, func(i, j int) bool { return snap.State.Aborted[i] < snap.State.Aborted[j] })
+	default:
+		snap.State.Type = "select_chart"
+	}
+
+	return snap
 }
 
 func (r *Room) IsHost(userID int32) bool {
@@ -274,6 +368,12 @@ func (r *Room) SetCycle(cycle bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Cycle = cycle
+}
+
+func (r *Room) SetMaxUsers(maxUsers int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.MaxUsers = maxUsers
 }
 
 func (r *Room) SetChart(chart *Chart) {

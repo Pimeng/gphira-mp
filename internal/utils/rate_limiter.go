@@ -146,6 +146,33 @@ func (r *RateLimiter) GetBlacklistedIPs() []struct {
 	return out
 }
 
+// GetCurrentRate returns the highest current per-IP log rate in logs/second.
+func (r *RateLimiter) GetCurrentRate() float64 {
+	if r == nil || r.windowMs <= 0 {
+		return 0
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	now := time.Now().UnixMilli()
+	cutoff := now - r.windowMs
+	var maxRate float64
+	for _, window := range r.windows {
+		var recent int
+		for _, ts := range window {
+			if ts >= cutoff {
+				recent++
+			}
+		}
+		rate := float64(recent) / float64(r.windowMs) * 1000
+		if rate > maxRate {
+			maxRate = rate
+		}
+	}
+	return maxRate
+}
+
 // RemoveFromBlacklist manually removes an IP from the blacklist.
 func (r *RateLimiter) RemoveFromBlacklist(ip string) {
 	r.mu.Lock()

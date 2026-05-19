@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Pimeng/gphira-mp-next/internal/game"
-	"github.com/Pimeng/gphira-mp-next/internal/replay"
 	"github.com/Pimeng/gphira-mp-next/internal/state"
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
+	"github.com/Pimeng/gphira-mp-next/pkg/roomid"
 )
 
 // HTTPServer provides HTTP endpoints for the Phira MP server.
@@ -22,6 +23,19 @@ type HTTPServer struct {
 	state    *state.ServerState
 	logger   *utils.Logger
 	wsServer *WSServer
+
+	replayMu       sync.Mutex
+	replaySessions map[string]replaySession
+
+	adminAuthMu             sync.Mutex
+	adminFailedAttemptsByIP map[string]int
+	adminBannedIPs          map[string]struct{}
+	otpMu                   sync.Mutex
+	otpSessions             map[string]otpSession
+	otpAttemptsByIP         map[string]int
+	otpAttemptsBySSID       map[string]int
+	otpBannedIPs            map[string]struct{}
+	otpBannedSSIDs          map[string]struct{}
 }
 
 // StartHTTPServer starts the HTTP service on the given address.
@@ -35,10 +49,16 @@ func StartHTTPServer(addr string, state *state.ServerState, logger *utils.Logger
 	mux.HandleFunc("/room", h.handleRoomList)
 	mux.HandleFunc("/room-creation/config", h.handleRoomCreationConfig)
 	mux.HandleFunc("/replay/config", h.handleReplayConfig)
+	mux.HandleFunc("/replay/auth", h.handleReplayAuth)
+	mux.HandleFunc("/replay/delete", h.handleReplayDelete)
+	mux.HandleFunc("/replay/upload", h.handleReplayUpload)
+	mux.HandleFunc("/replay/auto-upload/config", h.handleReplayAutoUploadConfig)
+	mux.HandleFunc("/admin/otp/request", h.handleAdminOTPRequest)
+	mux.HandleFunc("/admin/otp/verify", h.handleAdminOTPVerify)
 	mux.HandleFunc("/status", h.handleStatus)
 	mux.HandleFunc("/chart/", h.handleChartProxy)
 	h.registerAdminRoutes(mux)
-	mux.HandleFunc("/replay/download", h.adminAuthMiddleware(h.handleReplayDownload))
+	mux.HandleFunc("/replay/download", h.handleReplayDownload)
 
 	h.wsServer = NewWSServer(h)
 	h.wsServer.Start()
@@ -83,12 +103,17 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 
+	type hostInfo struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+
 	type roomInfo struct {
-		RoomID string     `json:"roomid"`
-		Cycle  bool       `json:"cycle"`
-		Lock   bool       `json:"lock"`
-		Host   playerInfo `json:"host"`
-		State  string     `json:"state"`
+		RoomID string   `json:"roomid"`
+		Cycle  bool     `json:"cycle"`
+		Lock   bool     `json:"lock"`
+		Host   hostInfo `json:"host"`
+		State  string   `json:"state"`
 		Chart  *struct {
 			Name string `json:"name"`
 			ID   string `json:"id"`
@@ -96,65 +121,70 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 		Players []playerInfo `json:"players"`
 	}
 
-	var rooms []roomInfo
+	var roomRefs []struct {
+		rid  roomid.RoomID
+		room *game.Room
+	}
 	var total int
+	users := map[int32]string{}
 
 	h.state.WithRLock(func() {
 		for rid, room := range h.state.Rooms {
-			if strings.HasPrefix(string(rid), "_") {
-				continue
-			}
-
-			hostUser := h.state.Users[room.HostID]
-			hostName := ""
-			if hostUser != nil {
-				hostName = hostUser.GetName()
-			}
-
-			var players []playerInfo
-			for _, uid := range room.UserIDs() {
-				total++
-				u := h.state.Users[uid]
-				name := ""
-				if u != nil {
-					name = u.GetName()
-				}
-				players = append(players, playerInfo{ID: uid, Name: name})
-			}
-
-			stateStr := "select_chart"
-			switch room.State.(type) {
-			case *game.StateWaitForReady:
-				stateStr = "waiting_for_ready"
-			case *game.StatePlaying:
-				stateStr = "playing"
-			}
-
-			var chart *struct {
-				Name string `json:"name"`
-				ID   string `json:"id"`
-			}
-			if room.Chart != nil {
-				chart = &struct {
-					Name string `json:"name"`
-					ID   string `json:"id"`
-				}{
-					Name: room.Chart.Name,
-					ID:   fmt.Sprintf("%d", room.Chart.ID),
-				}
-			}
-
-			rooms = append(rooms, roomInfo{
-				RoomID:  string(rid),
-				Cycle:   room.Cycle,
-				Lock:    room.Locked,
-				Host:    playerInfo{ID: room.HostID, Name: hostName},
-				State:   stateStr,
-				Chart:   chart,
-				Players: players,
-			})
+			roomRefs = append(roomRefs, struct {
+				rid  roomid.RoomID
+				room *game.Room
+			}{rid: rid, room: room})
+		}
+		for id, user := range h.state.Users {
+			users[id] = user.GetName()
 		}
 	})
+
+	var rooms []roomInfo
+	for _, ref := range roomRefs {
+		if strings.HasPrefix(string(ref.rid), "_") {
+			continue
+		}
+		snap := ref.room.Snapshot()
+		hostName := users[snap.HostID]
+		if hostName == "" {
+			hostName = fmt.Sprintf("%d", snap.HostID)
+		}
+		players := make([]playerInfo, 0, len(snap.Users))
+		for _, uid := range snap.Users {
+			name := users[uid]
+			if name == "" {
+				name = fmt.Sprintf("%d", uid)
+			}
+			players = append(players, playerInfo{ID: uid, Name: name})
+		}
+		total += len(players)
+
+		var chart *struct {
+			Name string `json:"name"`
+			ID   string `json:"id"`
+		}
+		if snap.Chart != nil {
+			chart = &struct {
+				Name string `json:"name"`
+				ID   string `json:"id"`
+			}{
+				Name: snap.Chart.Name,
+				ID:   fmt.Sprintf("%d", snap.Chart.ID),
+			}
+		}
+
+		rooms = append(rooms, roomInfo{
+			RoomID:  string(ref.rid),
+			Cycle:   snap.Cycle,
+			Lock:    snap.Locked,
+			Host:    hostInfo{ID: fmt.Sprintf("%d", snap.HostID), Name: hostName},
+			State:   snap.State.Type,
+			Chart:   chart,
+			Players: players,
+		})
+	}
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].RoomID < rooms[j].RoomID })
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rooms": rooms,
@@ -218,7 +248,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -284,35 +314,4 @@ func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
 		"name":  chart.Name,
 		"cache": false,
 	})
-}
-
-func (h *HTTPServer) handleReplayDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	q := r.URL.Query()
-	userID, err1 := strconv.ParseInt(q.Get("userId"), 10, 32)
-	chartID, err2 := strconv.ParseInt(q.Get("chartId"), 10, 32)
-	timestamp, err3 := strconv.ParseInt(q.Get("timestamp"), 10, 64)
-	if err1 != nil || err2 != nil || err3 != nil || userID < 0 || chartID < 0 || timestamp <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
-		return
-	}
-
-	runtime := h.state.SnapshotRuntime()
-	path := replay.ReplayFilePath(runtime.Config.ReplayBaseDir, int32(userID), int32(chartID), timestamp)
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not-found"})
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%d.phirarec"`, timestamp))
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-
-	http.ServeFile(w, r, path)
 }

@@ -9,31 +9,31 @@ import (
 
 // ServerConfig holds all server configuration fields.
 type ServerConfig struct {
-	Monitors         []int              `yaml:"MONITORS"`
-	TestAccountIDs   []int              `yaml:"TEST_ACCOUNT_IDS"`
-	ServerName       string             `yaml:"SERVER_NAME"`
-	Host             string             `yaml:"HOST"`
-	Port             int                `yaml:"PORT"`
-	HTTPService      *bool              `yaml:"HTTP_SERVICE"`
-	HTTPPort         int                `yaml:"HTTP_PORT"`
-	RoomMaxUsers     int                `yaml:"ROOM_MAX_USERS"`
-	ChatEnabled      *bool              `yaml:"CHAT_ENABLED"`
-	ReplayEnabled    *bool              `yaml:"REPLAY_ENABLED"`
-	ReplayBaseDir    string             `yaml:"REPLAY_BASE_DIR"`
-	ReplayAutoUpload *bool              `yaml:"REPLAY_AUTO_UPLOAD"`
-	AdminToken       string             `yaml:"ADMIN_TOKEN"`
-	AdminDataPath    string             `yaml:"ADMIN_DATA_PATH"`
-	RoomListTip      string             `yaml:"ROOM_LIST_TIP"`
-	LogLevel         string             `yaml:"LOG_LEVEL"`
-	RealIPHeader     string             `yaml:"REAL_IP_HEADER"`
-	HAProxyProtocol  *bool              `yaml:"HAPROXY_PROTOCOL"`
-	Lang             string             `yaml:"LANG"`
-	PhiraAPIEndpoint string             `yaml:"PHIRA_API_ENDPOINT"`
-	OutboundProxy    string             `yaml:"OUTBOUND_PROXY"`
-	ShareStation     *ShareStationConfig `yaml:"SHARE_STATION"`
-	Redis            *RedisConfig       `yaml:"REDIS"`
-	HitokotoAPIURL      string             `yaml:"HITOKOTO_API_URL"`
-	RoomCreationEnabled *bool              `yaml:"ROOM_CREATION_ENABLED"`
+	Monitors            []int               `yaml:"MONITORS"`
+	TestAccountIDs      []int               `yaml:"TEST_ACCOUNT_IDS"`
+	ServerName          string              `yaml:"SERVER_NAME"`
+	Host                string              `yaml:"HOST"`
+	Port                int                 `yaml:"PORT"`
+	HTTPService         *bool               `yaml:"HTTP_SERVICE"`
+	HTTPPort            int                 `yaml:"HTTP_PORT"`
+	RoomMaxUsers        int                 `yaml:"ROOM_MAX_USERS"`
+	ChatEnabled         *bool               `yaml:"CHAT_ENABLED"`
+	ReplayEnabled       *bool               `yaml:"REPLAY_ENABLED"`
+	ReplayBaseDir       string              `yaml:"REPLAY_BASE_DIR"`
+	ReplayAutoUpload    *bool               `yaml:"REPLAY_AUTO_UPLOAD"`
+	AdminToken          string              `yaml:"ADMIN_TOKEN"`
+	AdminDataPath       string              `yaml:"ADMIN_DATA_PATH"`
+	RoomListTip         string              `yaml:"ROOM_LIST_TIP"`
+	LogLevel            string              `yaml:"LOG_LEVEL"`
+	RealIPHeader        string              `yaml:"REAL_IP_HEADER"`
+	HAProxyProtocol     *bool               `yaml:"HAPROXY_PROTOCOL"`
+	Lang                string              `yaml:"LANG"`
+	PhiraAPIEndpoint    string              `yaml:"PHIRA_API_ENDPOINT"`
+	OutboundProxy       string              `yaml:"OUTBOUND_PROXY"`
+	ShareStation        *ShareStationConfig `yaml:"SHARE_STATION"`
+	Redis               *RedisConfig        `yaml:"REDIS"`
+	HitokotoAPIURL      string              `yaml:"HITOKOTO_API_URL"`
+	RoomCreationEnabled *bool               `yaml:"ROOM_CREATION_ENABLED"`
 }
 
 // ShareStationConfig holds share station settings.
@@ -54,29 +54,29 @@ type RedisConfig struct {
 // DefaultConfig returns a ServerConfig populated with sensible defaults.
 func DefaultConfig() *ServerConfig {
 	return &ServerConfig{
-		Monitors:         []int{2},
-		TestAccountIDs:   []int{1739989},
-		ServerName:       "Phira MP",
-		Host:             "::",
-		Port:             12346,
-		HTTPService:      Bool(false),
-		HTTPPort:         12347,
-		RoomMaxUsers:     12,
-		ChatEnabled:      Bool(true),
+		Monitors:            []int{2},
+		TestAccountIDs:      []int{1739989},
+		ServerName:          "Phira MP",
+		Host:                "::",
+		Port:                12346,
+		HTTPService:         Bool(false),
+		HTTPPort:            12347,
+		RoomMaxUsers:        8,
+		ChatEnabled:         Bool(true),
 		RoomCreationEnabled: Bool(true),
-		ReplayEnabled:    Bool(false),
-		ReplayBaseDir:    "./record",
-		ReplayAutoUpload: Bool(false),
-		AdminToken:       "",
-		AdminDataPath:    "./admin_data.json",
-		RoomListTip:      "",
-		LogLevel:         "INFO",
-		RealIPHeader:     "X-Forwarded-For",
-		HAProxyProtocol:  Bool(false),
-		Lang:             "zh-CN",
-		PhiraAPIEndpoint: "https://phira.5wyxi.com",
-		OutboundProxy:    "",
-		ShareStation:     nil,
+		ReplayEnabled:       Bool(false),
+		ReplayBaseDir:       "./record",
+		ReplayAutoUpload:    Bool(false),
+		AdminToken:          "",
+		AdminDataPath:       "./admin_data.json",
+		RoomListTip:         "",
+		LogLevel:            "INFO",
+		RealIPHeader:        "X-Forwarded-For",
+		HAProxyProtocol:     Bool(false),
+		Lang:                "zh-CN",
+		PhiraAPIEndpoint:    "https://phira.5wyxi.com",
+		OutboundProxy:       "",
+		ShareStation:        nil,
 		Redis: &RedisConfig{
 			Enabled:  false,
 			Host:     "127.0.0.1",

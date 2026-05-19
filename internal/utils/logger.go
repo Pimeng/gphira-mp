@@ -36,9 +36,9 @@ var levelWeights = map[LogLevel]int{
 
 // LogContext provides contextual metadata for log entries.
 type LogContext struct {
-	UserID         int32
-	IP             string
-	RoomID         string
+	UserID          int32
+	IP              string
+	RoomID          string
 	IsConnectionLog bool
 }
 
@@ -228,7 +228,10 @@ func (l *Logger) LogfL(lang *l10n.Language, key string, args map[string]string) 
 }
 
 // GetBlacklistedIPs returns currently blacklisted IPs.
-func (l *Logger) GetBlacklistedIPs() []struct{ IP string; ExpiresIn int64 } {
+func (l *Logger) GetBlacklistedIPs() []struct {
+	IP        string
+	ExpiresIn int64
+} {
 	if l.rateLimiter == nil {
 		return nil
 	}
@@ -249,6 +252,14 @@ func (l *Logger) ClearBlacklist() {
 		return
 	}
 	l.rateLimiter.ClearBlacklist()
+}
+
+// GetCurrentRate returns the current highest connection-log rate in logs/second.
+func (l *Logger) GetCurrentRate() float64 {
+	if l == nil || l.rateLimiter == nil {
+		return 0
+	}
+	return l.rateLimiter.GetCurrentRate()
 }
 
 // GetLevel returns the current minimum log level.

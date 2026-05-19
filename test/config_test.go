@@ -17,8 +17,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Host != "::" {
 		t.Errorf("default host = %q, want ::", cfg.Host)
 	}
-	if cfg.RoomMaxUsers != 12 {
-		t.Errorf("default room max users = %d, want 12", cfg.RoomMaxUsers)
+	if cfg.RoomMaxUsers != 8 {
+		t.Errorf("default room max users = %d, want 8", cfg.RoomMaxUsers)
 	}
 	if cfg.RoomCreationEnabled == nil || !*cfg.RoomCreationEnabled {
 		t.Error("room creation should be enabled by default")
