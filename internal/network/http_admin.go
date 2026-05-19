@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Pimeng/gphira-mp-next/internal/game"
+	"github.com/Pimeng/gphira-mp-next/internal/replay"
 	"github.com/Pimeng/gphira-mp-next/pkg/protocol"
 	"github.com/Pimeng/gphira-mp-next/pkg/roomid"
 )
@@ -323,13 +324,12 @@ func (h *HTTPServer) handleAdminContestConfig(w http.ResponseWriter, r *http.Req
 			for _, id := range req.Whitelist {
 				whitelist[int32(id)] = struct{}{}
 			}
-		} else {
-			for _, id := range room.UserIDs() {
-				whitelist[id] = struct{}{}
-			}
-			for _, id := range room.MonitorIDs() {
-				whitelist[id] = struct{}{}
-			}
+		}
+		for _, id := range room.UserIDs() {
+			whitelist[id] = struct{}{}
+		}
+		for _, id := range room.MonitorIDs() {
+			whitelist[id] = struct{}{}
 		}
 		room.SetContest(&game.ContestConfig{
 			Whitelist:   whitelist,
@@ -463,6 +463,17 @@ func (h *HTTPServer) handleAdminContestStart(w http.ResponseWriter, r *http.Requ
 				u.ResetGameTime()
 			}
 		}
+		if runtime.ReplayEnabled && h.state.ReplayRecorder != nil && room.ReplayEligible && room.Chart != nil {
+			var participants []replay.Participant
+			for _, uid := range users {
+				name := fmt.Sprintf("%d", uid)
+				if u := h.state.Users[uid]; u != nil {
+					name = u.GetName()
+				}
+				participants = append(participants, replay.Participant{ID: uid, Name: name})
+			}
+			h.state.ReplayRecorder.StartRoom(room.ID, room.Chart.ID, room.Chart.Name, participants)
+		}
 	})
 	if err := room.ForceStartPlaying(); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
@@ -473,6 +484,9 @@ func (h *HTTPServer) handleAdminContestStart(w http.ResponseWriter, r *http.Requ
 		Type:  protocol.ServerCmdChangeState,
 		State: room.ClientRoomState(),
 	})
+	if h.state.WSServer != nil {
+		h.state.WSServer.BroadcastRoomUpdate(rid, nil)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

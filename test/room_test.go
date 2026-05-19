@@ -124,6 +124,42 @@ func TestRoomStateMachine(t *testing.T) {
 	}
 }
 
+func TestRoomWaitForReadyIncludesMonitorsAndResetsGameTime(t *testing.T) {
+	room := game.NewRoom(roomid.RoomID("ready-monitor-room"), 1, 4, false)
+	room.AddUser(2, false)
+	room.AddUser(3, true)
+	room.Chart = &game.Chart{ID: 1, Name: "Test Chart"}
+	room.State = &game.StateWaitForReady{Started: map[int32]struct{}{1: {}, 2: {}}}
+
+	users := map[int32]*game.User{
+		1: game.NewUser(1, "User1", "zh-CN"),
+		2: game.NewUser(2, "User2", "zh-CN"),
+		3: game.NewUser(3, "Monitor", "zh-CN"),
+	}
+	users[1].SetGameTime(12.5)
+	users[2].SetGameTime(9.25)
+
+	cb := &game.RoomCallbacks{
+		UsersById: func(id int32) *game.User { return users[id] },
+		Broadcast: func(cmd protocol.ServerCommand) error { return nil },
+		Lang:      l10n.New("zh-CN"),
+	}
+
+	_ = room.CheckAllReady(cb)
+	if room.ClientRoomState().Type != protocol.RoomStateWaitingForReady {
+		t.Fatal("monitor should also need to be ready before entering Playing")
+	}
+
+	room.State.(*game.StateWaitForReady).Started[3] = struct{}{}
+	_ = room.CheckAllReady(cb)
+	if room.ClientRoomState().Type != protocol.RoomStatePlaying {
+		t.Fatalf("state = %d, want Playing after monitor is ready", room.ClientRoomState().Type)
+	}
+	if users[1].GetGameTime() != -1e9 || users[2].GetGameTime() != -1e9 {
+		t.Fatalf("player game times should be reset, got %v and %v", users[1].GetGameTime(), users[2].GetGameTime())
+	}
+}
+
 func TestRoomOnUserLeave(t *testing.T) {
 	room := game.NewRoom(roomid.RoomID("leave-room"), 1, 4, false)
 	room.AddUser(1, false)
@@ -158,6 +194,26 @@ func TestRoomOnUserLeave(t *testing.T) {
 	shouldDisband = room.OnUserLeave(u1, cb)
 	if !shouldDisband {
 		t.Error("should disband when host leaves")
+	}
+}
+
+func TestRoomRefreshLiveMatchesReplayEnabled(t *testing.T) {
+	room := game.NewRoom(roomid.RoomID("live-room"), 1, 4, true)
+	room.RefreshLive(false)
+	if room.Live {
+		t.Fatal("replay-eligible room should not be live when replay is disabled and no monitors joined")
+	}
+
+	room.RefreshLive(true)
+	if !room.Live {
+		t.Fatal("replay-eligible room should be live when replay is enabled")
+	}
+
+	room.RefreshLive(false)
+	room.AddUser(2, true)
+	room.RefreshLive(false)
+	if !room.Live {
+		t.Fatal("room with monitors should be live even when replay is disabled")
 	}
 }
 

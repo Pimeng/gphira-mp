@@ -57,6 +57,7 @@ cli-welcome=欢迎使用 GPhira MP CLI. 输入 "help" 获取命令列表
 
 # 缺失的已有 key
 label-monitor-suffix=（旁观）
+replay-recorder-name=回放录制器
 lang-check=zh
 log-room-game-start-monitors=，旁观：{ $monitors }
 room-already-ready=你已经准备就绪

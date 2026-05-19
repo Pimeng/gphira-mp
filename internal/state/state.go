@@ -70,6 +70,7 @@ func NewServerState(cfg *config.ServerConfig, logger *utils.Logger, serverName, 
 		BannedRoomUsers:     make(map[roomid.RoomID]map[int32]struct{}),
 		RoomCreationEnabled: config.DerefBool(cfg.RoomCreationEnabled, true),
 		ReplayEnabled:       config.DerefBool(cfg.ReplayEnabled, false),
+		ReplayRecorder:      replay.NewRecorder(cfg.ReplayBaseDir, logger),
 		ChartCache:          utils.NewChartCache(200, 60*time.Minute),
 		UploadedReplayMeta:  utils.NewUploadedReplayMeta(),
 		AutoUploadConfigs:   utils.NewAutoUploadConfigs(),
@@ -92,6 +93,11 @@ func (s *ServerState) ApplyConfig(cfg *config.ServerConfig) {
 	s.ServerLang = l10n.New(cfg.Lang)
 	s.ReplayEnabled = config.DerefBool(cfg.ReplayEnabled, false)
 	s.RoomCreationEnabled = config.DerefBool(cfg.RoomCreationEnabled, true)
+	if s.ReplayRecorder == nil {
+		s.ReplayRecorder = replay.NewRecorder(cfg.ReplayBaseDir, s.Logger)
+	} else {
+		s.ReplayRecorder.SetBaseDir(cfg.ReplayBaseDir)
+	}
 	if s.Logger != nil {
 		s.Logger.DebugL(s.ServerLang, "log-config-applied", map[string]string{"serverName": s.ServerName, "lang": cfg.Lang, "replay": fmt.Sprintf("%v", s.ReplayEnabled), "roomCreation": fmt.Sprintf("%v", s.RoomCreationEnabled)})
 	}

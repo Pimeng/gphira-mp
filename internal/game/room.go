@@ -262,9 +262,6 @@ func (r *Room) OnUserJoin(userID int32, monitor bool) {
 			s.Aborted[userID] = struct{}{}
 		}
 	}
-	if s, ok := r.State.(*StateWaitForReady); ok {
-		s.Started[userID] = struct{}{}
-	}
 }
 
 func (r *Room) SetLocked(locked bool) {
@@ -312,10 +309,11 @@ func (r *Room) SetReady(userID int32) (already bool, err error) {
 	}
 	s, ok := r.State.(*StateWaitForReady)
 	if !ok {
-		return false, nil
+		// Not in WaitForReady state (e.g. SelectChart) - treat as no-op
+		return true, nil
 	}
 	if _, exists := s.Started[userID]; exists {
-		return true, nil
+		return false, errors.New("room-already-ready")
 	}
 	s.Started[userID] = struct{}{}
 	return false, nil
@@ -390,6 +388,12 @@ func (r *Room) ForceStartPlaying() error {
 	return nil
 }
 
+func (r *Room) RefreshLive(replayEnabled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Live = len(r.monitors) > 0 || (replayEnabled && r.ReplayEligible)
+}
+
 func (r *Room) CanAcceptTouches(userID int32) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -458,6 +462,13 @@ func (r *Room) resetGameTimeLocked(usersById func(int32) *User) {
 	}
 }
 
+// ResetGameTime resets the game time for all players in the room.
+func (r *Room) ResetGameTime(usersById func(int32) *User) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	r.resetGameTimeLocked(usersById)
+}
+
 func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -492,7 +503,9 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 			}
 		}
 
-		r.resetGameTimeLocked(callbacks.UsersById)
+		if callbacks.UsersById != nil {
+			r.resetGameTimeLocked(callbacks.UsersById)
+		}
 		r.State = &StatePlaying{
 			Results: make(map[int32]*RecordData),
 			Aborted: make(map[int32]struct{}),
@@ -616,19 +629,6 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 
 		r.State = &StateSelectChart{}
 
-		if callbacks.Broadcast != nil {
-			if err := callbacks.Broadcast(protocol.ServerCommand{
-				Type:  protocol.ServerCmdChangeState,
-				State: r.clientRoomStateLocked(),
-			}); err != nil {
-				return err
-			}
-		}
-
-		if callbacks.NotifyWebSocket != nil {
-			callbacks.NotifyWebSocket(r.ID)
-		}
-
 		if r.Contest != nil && r.Contest.AutoDisband && callbacks.DisbandRoom != nil {
 			chartText := "null"
 			if r.Chart != nil {
@@ -682,6 +682,7 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 
 		if r.Cycle {
 			users := r.userIDsLocked()
+			sort.Slice(users, func(i, j int) bool { return users[i] < users[j] })
 			if len(users) > 1 {
 				idx := -1
 				for i, id := range users {
@@ -721,6 +722,19 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 					newUser.TrySend(protocol.ServerCommand{Type: protocol.ServerCmdChangeHost, IsHost: true})
 				}
 			}
+		}
+
+		if callbacks.Broadcast != nil {
+			if err := callbacks.Broadcast(protocol.ServerCommand{
+				Type:  protocol.ServerCmdChangeState,
+				State: r.clientRoomStateLocked(),
+			}); err != nil {
+				return err
+			}
+		}
+
+		if callbacks.NotifyWebSocket != nil {
+			callbacks.NotifyWebSocket(r.ID)
 		}
 	}
 

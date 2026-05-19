@@ -57,6 +57,7 @@ cli-welcome=Welcome to GPhira MP CLI. Type "help" for available commands.
 
 # Missing existing keys
 label-monitor-suffix= (monitor)
+replay-recorder-name=Replay Recorder
 lang-check=en
 log-room-game-start-monitors=, monitors: { $monitors }
 room-already-ready=You are already ready

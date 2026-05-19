@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Pimeng/gphira-mp-next/internal/game"
+	"github.com/Pimeng/gphira-mp-next/internal/replay"
 	"github.com/Pimeng/gphira-mp-next/internal/state"
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
 	"github.com/Pimeng/gphira-mp-next/pkg/protocol"
@@ -323,13 +324,12 @@ func (c *CLI) contestEnable(rid roomid.RoomID, userArgs []string) {
 					whitelist[int32(id)] = struct{}{}
 				}
 			}
-		} else {
-			for _, id := range room.UserIDs() {
-				whitelist[id] = struct{}{}
-			}
-			for _, id := range room.MonitorIDs() {
-				whitelist[id] = struct{}{}
-			}
+		}
+		for _, id := range room.UserIDs() {
+			whitelist[id] = struct{}{}
+		}
+		for _, id := range room.MonitorIDs() {
+			whitelist[id] = struct{}{}
 		}
 		room.Contest = &game.ContestConfig{
 			Whitelist:   whitelist,
@@ -479,6 +479,17 @@ func (c *CLI) contestStart(rid roomid.RoomID, args []string) {
 			if u := c.state.Users[uid]; u != nil {
 				u.ResetGameTime()
 			}
+		}
+		if c.state.ReplayEnabled && c.state.ReplayRecorder != nil && room.ReplayEligible && room.Chart != nil {
+			var participants []replay.Participant
+			for _, uid := range users {
+				name := fmt.Sprintf("%d", uid)
+				if u := c.state.Users[uid]; u != nil {
+					name = u.GetName()
+				}
+				participants = append(participants, replay.Participant{ID: uid, Name: name})
+			}
+			c.state.ReplayRecorder.StartRoom(room.ID, room.Chart.ID, room.Chart.Name, participants)
 		}
 		room.State = &game.StatePlaying{
 			Results: make(map[int32]*game.RecordData),

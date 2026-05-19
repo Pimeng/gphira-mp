@@ -183,6 +183,14 @@ func (s *Session) handleAuthenticate(token string) error {
 		existingSession.adminDisconnect(true)
 	}
 
+	var isBanned bool
+	s.State.WithRLock(func() {
+		_, isBanned = s.State.BannedUsers[s.user.ID]
+	})
+	if isBanned && s.user.GetRoom() != nil {
+		s.handleUserLeaveRoom(s.user, s.user.GetRoom())
+	}
+
 	// If the user was dangling, restore room state broadcast to notify others.
 	if wasDangling && s.user.GetRoom() != nil {
 		room := s.user.GetRoom()
@@ -308,7 +316,56 @@ func (s *Session) checkRoomAllReady(room *game.Room) {
 				s.State.WSServer.BroadcastRoomUpdate(rid, nil)
 			}
 		},
+		DisbandRoom: func(r *game.Room) {
+			s.State.WithLock(func() {
+				delete(s.State.Rooms, r.ID)
+				for _, u := range s.State.Users {
+					if u.GetRoom() == r {
+						u.ClearRoom()
+					}
+				}
+			})
+			if runtime.ReplayEnabled && s.State.ReplayRecorder != nil {
+				s.State.ReplayRecorder.EndRoom(r.ID)
+			}
+		},
 	})
+}
+
+func clampRoomMaxUsers(v int) int {
+	if v == 0 {
+		return 8
+	}
+	if v < 1 {
+		return 1
+	}
+	if v > 64 {
+		return 64
+	}
+	return v
+}
+
+func (s *Session) sendFakeMonitorJoin(targetUser *game.User, room *game.Room) {
+	runtime := s.State.SnapshotRuntime()
+	if !runtime.ReplayEnabled || !room.ReplayEligible || s.State.ReplayRecorder == nil {
+		return
+	}
+	fake := protocol.UserInfo{
+		ID:      2000000000,
+		Name:    runtime.ServerLang.Format("replay-recorder-name", nil),
+		Monitor: true,
+	}
+	go func() {
+		time.Sleep(2 * time.Millisecond)
+		if targetUser.GetRoom() != room {
+			return
+		}
+		_ = targetUser.TrySend(protocol.ServerCommand{Type: protocol.ServerCmdOnJoinRoom, UserInfo: fake})
+		_ = targetUser.TrySend(protocol.ServerCommand{
+			Type:    protocol.ServerCmdMessage,
+			Message: protocol.Message{Type: protocol.MessageJoinRoom, User: fake.ID, Name: fake.Name},
+		})
+	}()
 }
 
 func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, error) {
@@ -354,31 +411,53 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 			}
 		},
 		ProcessCreateRoom: func(id roomid.RoomID) error {
-			if s.user.GetRoom() != nil {
-				return fmt.Errorf("%s", s.user.GetLang().Format("room-already-in-room", nil))
+			var isBanned bool
+			s.State.WithRLock(func() {
+				_, isBanned = s.State.BannedUsers[s.user.ID]
+			})
+			if isBanned {
+				return fmt.Errorf("%s", s.user.GetLang().Format("user-banned-by-server", nil))
 			}
 			if !s.State.RoomCreationEnabled {
 				return fmt.Errorf("%s", s.user.GetLang().Format("room-creation-disabled", nil))
 			}
-			maxUsers := runtime.Config.RoomMaxUsers
-			if maxUsers < 1 || maxUsers > 64 {
-				maxUsers = 8
+			if s.user.GetRoom() != nil {
+				return fmt.Errorf("%s", s.user.GetLang().Format("room-already-in-room", nil))
 			}
+			maxUsers := clampRoomMaxUsers(runtime.Config.RoomMaxUsers)
 			room := game.NewRoom(id, s.user.ID, maxUsers, runtime.ReplayEnabled)
 			s.State.WithLock(func() {
 				if _, exists := s.State.Rooms[id]; exists {
 					panic(s.user.GetLang().Format("create-id-occupied", nil))
 				}
 				s.State.Rooms[id] = room
+				s.user.SetRoom(room, false)
 			})
-			s.user.SetRoom(room, false)
+			room.RefreshLive(runtime.ReplayEnabled)
 			_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageCreateRoom, User: s.user.ID})
+			s.sendFakeMonitorJoin(s.user, room)
 			s.State.Logger.LogRoomMark(runtime.ServerLang, room.ID, "log-room-created", map[string]string{"user": s.user.GetName(), "room": string(room.ID)})
 			return nil
 		},
 		ProcessJoinRoom: func(id roomid.RoomID, monitor bool) (*protocol.JoinRoomResponse, error) {
+			var globalBanned bool
+			s.State.WithRLock(func() {
+				_, globalBanned = s.State.BannedUsers[s.user.ID]
+			})
+			if globalBanned {
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("user-banned-by-server", nil))
+			}
 			if s.user.GetRoom() != nil {
 				return nil, fmt.Errorf("%s", s.user.GetLang().Format("room-already-in-room", nil))
+			}
+			var roomBanned bool
+			s.State.WithRLock(func() {
+				if bannedRoom, ok := s.State.BannedRoomUsers[id]; ok {
+					_, roomBanned = bannedRoom[s.user.ID]
+				}
+			})
+			if roomBanned {
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("room-banned", map[string]string{"id": string(id)}))
 			}
 			var room *game.Room
 			s.State.WithRLock(func() {
@@ -395,10 +474,18 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 			}
 			s.user.SetRoom(room, monitor)
 			room.OnUserJoin(s.user.ID, monitor)
+			room.RefreshLive(runtime.ReplayEnabled)
 
 			users := s.collectUsers()
+			// ProtocolHack: if room is not in SelectChart state but has a chart,
+			// respond with SelectChart so client gets chart info first, then send real state.
+			respState := room.ClientRoomState()
+			if _, isSelectChart := room.State.(*game.StateSelectChart); !isSelectChart && room.Chart != nil {
+				chartID := int32(room.Chart.ID)
+				respState = protocol.RoomState{Type: protocol.RoomStateSelectChart, ChartID: &chartID}
+			}
 			resp := protocol.JoinRoomResponse{
-				State: room.ClientRoomState(),
+				State: respState,
 				Users: make([]protocol.UserInfo, 0),
 				Live:  room.Live,
 			}
@@ -418,6 +505,25 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 			}
 			s.State.Logger.LogRoomMark(runtime.ServerLang, room.ID, "log-room-joined", map[string]string{"user": s.user.GetName(), "suffix": suffix, "room": string(room.ID)})
 
+			// ProtocolHack: schedule deferred real-state correction for client
+			if _, isSelectChart := room.State.(*game.StateSelectChart); !isSelectChart && room.Chart != nil {
+				realState := room.ClientRoomState()
+				chartID := int32(room.Chart.ID)
+				go func() {
+					time.Sleep(2 * time.Millisecond)
+					_ = s.user.TrySend(protocol.ServerCommand{
+						Type:  protocol.ServerCmdChangeState,
+						State: protocol.RoomState{Type: protocol.RoomStateSelectChart, ChartID: &chartID},
+					})
+					time.Sleep(2 * time.Millisecond)
+					_ = s.user.TrySend(protocol.ServerCommand{
+						Type:  protocol.ServerCmdChangeState,
+						State: realState,
+					})
+				}()
+			}
+
+			s.sendFakeMonitorJoin(s.user, room)
 			return &resp, nil
 		},
 		DisbandRoom: func(room *game.Room) {
@@ -527,15 +633,19 @@ func (s *Session) markLost() {
 	}
 
 	var user *game.User
+	detachedUserSession := false
 	s.State.WithLock(func() {
 		delete(s.State.Sessions, s.ID)
 		if s.user != nil {
-			s.user.SetSession(nil)
 			user = s.user
+			if user.GetSession() == s {
+				user.SetSession(nil)
+				detachedUserSession = true
+			}
 		}
 	})
 
-	if user == nil {
+	if user == nil || !detachedUserSession {
 		return
 	}
 
@@ -560,10 +670,8 @@ func (s *Session) markLost() {
 	}
 
 	// If admin disconnect requested to preserve room (e.g. kicking stale session),
-	// just mark dangling but do NOT leave the room.
+	// leave the user attached to its room without scheduling cleanup.
 	if preserveRoom {
-		user.MarkDangle()
-		s.scheduleDangleCleanup(user)
 		return
 	}
 
@@ -577,6 +685,39 @@ func (s *Session) markLost() {
 	s.scheduleDangleCleanup(user)
 }
 
+func (s *Session) handleUserLeaveRoom(user *game.User, room *game.Room) {
+	runtime := s.State.SnapshotRuntime()
+	participantIDs := room.AllParticipantIDs()
+	shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
+		Broadcast: func(cmd protocol.ServerCommand) error {
+			for _, id := range participantIDs {
+				if u := s.findUser(id); u != nil {
+					_ = u.TrySend(cmd)
+				}
+			}
+			return nil
+		},
+		UsersById:        s.findUser,
+		PickRandomUserId: utils.RandomPickInt32,
+		Lang:             runtime.ServerLang,
+		Logger:           s.State.Logger,
+		NotifyWebSocket: func(rid roomid.RoomID) {
+			if s.State.WSServer != nil {
+				s.State.WSServer.BroadcastRoomUpdate(rid, nil)
+			}
+		},
+	})
+	if shouldDisband {
+		s.State.Logger.LogRoomInfo(runtime.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
+		s.State.WithLock(func() {
+			delete(s.State.Rooms, room.ID)
+		})
+		return
+	}
+	room.RefreshLive(runtime.ReplayEnabled)
+	s.checkRoomAllReady(room)
+}
+
 // handleUserLeaveAndRemove immediately removes the user from their room and
 // deletes them from the global user map. Used for banned users and playing-state
 // disconnects where dangling is not desired.
@@ -585,30 +726,7 @@ func (s *Session) handleUserLeaveAndRemove(user *game.User) {
 	s.State.Logger.DebugL(runtime.ServerLang, "log-user-leave-remove", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName()})
 	if user.GetRoom() != nil {
 		room := user.GetRoom()
-		participantIDs := room.AllParticipantIDs()
-		shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
-			Broadcast: func(cmd protocol.ServerCommand) error {
-				for _, id := range participantIDs {
-					if u := s.findUser(id); u != nil {
-						_ = u.TrySend(cmd)
-					}
-				}
-				return nil
-			},
-			UsersById:        s.findUser,
-			PickRandomUserId: utils.RandomPickInt32,
-			Lang:             runtime.ServerLang,
-			Logger:           s.State.Logger,
-		})
-		if shouldDisband {
-			s.State.Logger.LogRoomInfo(runtime.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
-			s.State.WithLock(func() {
-				delete(s.State.Rooms, room.ID)
-			})
-		} else {
-			s.checkRoomAllReady(room)
-		}
-		user.ClearRoom()
+		s.handleUserLeaveRoom(user, room)
 	}
 	s.State.WithLock(func() {
 		delete(s.State.Users, user.ID)
@@ -637,35 +755,7 @@ func (s *Session) scheduleDangleCleanup(user *game.User) {
 		if dangleRoom != nil {
 			room := dangleRoom
 			s.State.Logger.DebugL(runtime.ServerLang, "log-dangle-cleanup-leaving", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName(), "room": string(room.ID)})
-			participantIDs := room.AllParticipantIDs()
-			shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
-				Broadcast: func(cmd protocol.ServerCommand) error {
-					for _, id := range participantIDs {
-						if u := s.findUser(id); u != nil {
-							_ = u.TrySend(cmd)
-						}
-					}
-					return nil
-				},
-				UsersById:        s.findUser,
-				PickRandomUserId: utils.RandomPickInt32,
-				Lang:             runtime.ServerLang,
-				Logger:           s.State.Logger,
-				NotifyWebSocket: func(rid roomid.RoomID) {
-					if s.State.WSServer != nil {
-						s.State.WSServer.BroadcastRoomUpdate(rid, nil)
-					}
-				},
-			})
-			if shouldDisband {
-				s.State.Logger.LogRoomInfo(runtime.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
-				s.State.WithLock(func() {
-					delete(s.State.Rooms, room.ID)
-				})
-			} else {
-				s.checkRoomAllReady(room)
-			}
-			user.ClearRoom()
+			s.handleUserLeaveRoom(user, room)
 		}
 
 		s.State.WithLock(func() {

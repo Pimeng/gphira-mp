@@ -158,9 +158,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 			}
 			ctx.DisbandRoom(room)
 		} else {
+			room.RefreshLive(runtime.ReplayEnabled)
 			ctx.CheckRoomAllReady(room)
 		}
-		user.ClearRoom()
 		return protocol.ServerCommand{Type: protocol.ServerCmdLeaveRoom, Result: protocol.Ok(struct{}{})}, nil
 
 	case protocol.ClientCmdLockRoom:
@@ -232,6 +232,7 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 		if err := room.ValidateStart(user.ID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdRequestStart, Result: protocol.Err[struct{}](err.Error())}, nil
 		}
+		room.ResetGameTime(ctx.findUser)
 		_ = ctx.BroadcastRoomMessage(room, protocol.Message{Type: protocol.MessageGameStart, User: user.ID})
 		if err := room.StartWaitForReady(user.ID); err != nil {
 			return protocol.ServerCommand{Type: protocol.ServerCmdRequestStart, Result: protocol.Err[struct{}](err.Error())}, nil
@@ -256,7 +257,8 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 			return protocol.ServerCommand{Type: protocol.ServerCmdReady, Result: protocol.Err[struct{}](user.GetLang().Format(err.Error(), nil))}, nil
 		}
 		if already {
-			return protocol.ServerCommand{Type: protocol.ServerCmdReady, Result: protocol.Err[struct{}](user.GetLang().Format("room-already-ready", nil))}, nil
+			// Already ready or not in WaitForReady state - silently succeed
+			return protocol.ServerCommand{Type: protocol.ServerCmdReady, Result: protocol.Ok(struct{}{})}, nil
 		}
 		_ = ctx.BroadcastRoomMessage(room, protocol.Message{Type: protocol.MessageReady, User: user.ID})
 		ctx.CheckRoomAllReady(room)
@@ -314,6 +316,9 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 			StdScore:  record.StdScore,
 		})
 		if err != nil {
+			if err.Error() == "room-invalid-state" {
+				return protocol.ServerCommand{Type: protocol.ServerCmdPlayed, Result: protocol.Ok(struct{}{})}, nil
+			}
 			return protocol.ServerCommand{Type: protocol.ServerCmdPlayed, Result: protocol.Err[struct{}](user.GetLang().Format(err.Error(), nil))}, nil
 		}
 		if runtime.ReplayEnabled && ctx.State.ReplayRecorder != nil && room.ReplayEligible {
@@ -332,6 +337,10 @@ func ProcessClientCommand(ctx *CommandContext, cmd protocol.ClientCommand) (prot
 		}
 		err := room.SetAborted(user.ID)
 		if err != nil {
+			if err.Error() == "room-invalid-state" {
+				// Not in Playing state - silently succeed
+				return protocol.ServerCommand{Type: protocol.ServerCmdAbort, Result: protocol.Ok(struct{}{})}, nil
+			}
 			return protocol.ServerCommand{Type: protocol.ServerCmdAbort, Result: protocol.Err[struct{}](user.GetLang().Format(err.Error(), nil))}, nil
 		}
 		_ = ctx.BroadcastRoomMessage(room, protocol.Message{Type: protocol.MessageAbort, User: user.ID})
