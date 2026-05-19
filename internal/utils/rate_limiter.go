@@ -19,7 +19,11 @@ type RateLimiter struct {
 	maxPerWindow int
 	windowMs     int64
 	blacklistMs  int64
+
+	callsSinceCleanup int
 }
+
+const cleanupTriggerCalls = 256
 
 // NewRateLimiter creates a rate limiter for connection logs.
 // maxPerWindow: max logs allowed per IP within the time window.
@@ -46,6 +50,11 @@ func (r *RateLimiter) ShouldLogConnection(ip string) bool {
 	defer r.mu.Unlock()
 
 	now := time.Now().UnixMilli()
+	r.callsSinceCleanup++
+	if r.callsSinceCleanup >= cleanupTriggerCalls {
+		r.cleanupExpiredLocked(now)
+		r.callsSinceCleanup = 0
+	}
 
 	// Check blacklist
 	if expiry, ok := r.blacklisted[ip]; ok {
@@ -58,14 +67,13 @@ func (r *RateLimiter) ShouldLogConnection(ip string) bool {
 	// Clean old entries in window
 	window := r.windows[ip]
 	cutoff := now - r.windowMs
-	idx := 0
-	for i, t := range window {
+	kept := window[:0]
+	for _, t := range window {
 		if t >= cutoff {
-			idx = i
-			break
+			kept = append(kept, t)
 		}
 	}
-	window = window[idx:]
+	window = kept
 
 	// Check limit
 	if len(window) >= r.maxPerWindow {
@@ -80,16 +88,59 @@ func (r *RateLimiter) ShouldLogConnection(ip string) bool {
 	return true
 }
 
+// CleanUp removes expired blacklist entries and stale per-IP windows.
+func (r *RateLimiter) CleanUp() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupExpiredLocked(time.Now().UnixMilli())
+	r.callsSinceCleanup = 0
+}
+
+func (r *RateLimiter) cleanupExpiredLocked(now int64) {
+	for ip, expiry := range r.blacklisted {
+		if now >= expiry {
+			delete(r.blacklisted, ip)
+		}
+	}
+
+	cutoff := now - r.windowMs
+	for ip, window := range r.windows {
+		kept := window[:0]
+		for _, t := range window {
+			if t >= cutoff {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) == 0 {
+			delete(r.windows, ip)
+			continue
+		}
+		r.windows[ip] = kept
+	}
+}
+
 // GetBlacklistedIPs returns a snapshot of currently blacklisted IPs with remaining ms.
-func (r *RateLimiter) GetBlacklistedIPs() []struct{ IP string; ExpiresIn int64 } {
+func (r *RateLimiter) GetBlacklistedIPs() []struct {
+	IP        string
+	ExpiresIn int64
+} {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	now := time.Now().UnixMilli()
-	var out []struct{ IP string; ExpiresIn int64 }
+	var out []struct {
+		IP        string
+		ExpiresIn int64
+	}
 	for ip, expiry := range r.blacklisted {
 		if now < expiry {
-			out = append(out, struct{ IP string; ExpiresIn int64 }{IP: ip, ExpiresIn: expiry - now})
+			out = append(out, struct {
+				IP        string
+				ExpiresIn int64
+			}{IP: ip, ExpiresIn: expiry - now})
 		}
 	}
 	return out

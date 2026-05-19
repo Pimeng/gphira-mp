@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Pimeng/gphira-mp-next/internal/game"
 	"github.com/Pimeng/gphira-mp-next/internal/state"
@@ -130,7 +131,15 @@ func (c *CLI) Done() <-chan struct{} {
 // Stop signals the CLI to stop reading input.
 func (c *CLI) Stop() {
 	close(c.stop)
-	c.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		c.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
 }
 
 func (c *CLI) printHelp() {
@@ -148,7 +157,7 @@ func (c *CLI) listRooms() {
 		for rid, room := range c.state.Rooms {
 			hostName := ""
 			if u := c.state.Users[room.HostID]; u != nil {
-				hostName = u.Name
+				hostName = u.GetName()
 			}
 			stateStr := "select"
 			switch room.State.(type) {
@@ -174,10 +183,10 @@ func (c *CLI) listUsers() {
 		fmt.Println(strings.Repeat("-", 70))
 		for _, u := range c.state.Users {
 			roomID := ""
-			if u.Room != nil {
-				roomID = string(u.Room.ID)
+			if u.GetRoom() != nil {
+				roomID = string(u.GetRoom().ID)
 			}
-			fmt.Printf("%-10d %-20s %-20s %v\n", u.ID, u.Name, roomID, u.Monitor)
+			fmt.Printf("%-10d %-20s %-20s %v\n", u.ID, u.GetName(), roomID, u.IsMonitor())
 		}
 	})
 }
@@ -195,7 +204,7 @@ func (c *CLI) cmdKickUser(args []string) {
 	var name string
 	c.state.WithRLock(func() {
 		if u := c.state.Users[int32(id)]; u != nil {
-			name = u.Name
+			name = u.GetName()
 		}
 	})
 	if c.kickUserFn != nil && c.kickUserFn(int32(id)) {
@@ -343,7 +352,7 @@ func (c *CLI) contestDisable(rid roomid.RoomID) {
 		if !exists {
 			return
 		}
-		room.Contest = nil
+		room.ClearContest()
 		ok = true
 	})
 	if ok {
@@ -376,7 +385,7 @@ func (c *CLI) contestWhitelist(rid roomid.RoomID, userArgs []string) {
 		for _, id := range room.MonitorIDs() {
 			whitelist[id] = struct{}{}
 		}
-		room.Contest.Whitelist = whitelist
+		_ = room.SetContestWhitelist(whitelist)
 		ok = true
 	})
 	if ok {
@@ -468,7 +477,7 @@ func (c *CLI) contestStart(rid roomid.RoomID, args []string) {
 	c.state.WithLock(func() {
 		for _, uid := range users {
 			if u := c.state.Users[uid]; u != nil {
-				u.GameTime = -1e9
+				u.ResetGameTime()
 			}
 		}
 		room.State = &game.StatePlaying{

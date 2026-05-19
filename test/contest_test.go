@@ -130,7 +130,7 @@ func TestContestAutoDisbandLogsResults(t *testing.T) {
 	disbanded := false
 	cb := &game.RoomCallbacks{
 		UsersById: func(id int32) *game.User {
-			return &game.User{ID: id, Name: "User"}
+			return game.NewUser(id, "User", "zh-CN")
 		},
 		Broadcast:   func(cmd protocol.ServerCommand) error { return nil },
 		DisbandRoom: func(r *game.Room) { disbanded = true },

@@ -13,23 +13,28 @@ type SessionSender interface {
 }
 
 type User struct {
-	ID          int32
-	Name        string
-	Lang        *l10n.Language
-	Session     SessionSender
-	Room        *Room
-	Monitor     bool
-	GameTime    float32
-	mu          sync.Mutex
+	ID       int32
+	name     string
+	lang     *l10n.Language
+	session  SessionSender
+	room     *Room
+	monitor  bool
+	gameTime float32
+	mu       sync.RWMutex
+
 	dangleToken any
 	dangleRoom  *Room
 }
 
 func (u *User) ToInfo() protocol.UserInfo {
+	u.mu.RLock()
+	name := u.name
+	monitor := u.monitor
+	u.mu.RUnlock()
 	return protocol.UserInfo{
 		ID:      u.ID,
-		Name:    u.Name,
-		Monitor: u.Monitor,
+		Name:    name,
+		Monitor: monitor,
 	}
 }
 
@@ -45,16 +50,89 @@ func (u *User) CanMonitor(monitors []int) bool {
 func NewUser(id int32, name, language string) *User {
 	return &User{
 		ID:       id,
-		Name:     name,
-		Lang:     l10n.New(language),
-		GameTime: -1e9,
+		name:     name,
+		lang:     l10n.New(language),
+		gameTime: -1e9,
 	}
+}
+
+func (u *User) GetName() string {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.name
+}
+
+func (u *User) GetLang() *l10n.Language {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.lang
+}
+
+func (u *User) SetIdentity(name, language string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.name = name
+	u.lang = l10n.New(language)
+}
+
+func (u *User) GetSession() SessionSender {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.session
+}
+
+func (u *User) HasSession() bool {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.session != nil
+}
+
+func (u *User) GetRoom() *Room {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.room
+}
+
+func (u *User) IsMonitor() bool {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.monitor
+}
+
+func (u *User) SetRoom(room *Room, monitor bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.room = room
+	u.monitor = monitor
+}
+
+func (u *User) ClearRoom() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.room = nil
+	u.monitor = false
+}
+
+func (u *User) SetGameTime(v float32) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.gameTime = v
+}
+
+func (u *User) ResetGameTime() {
+	u.SetGameTime(-1e9)
+}
+
+func (u *User) GetGameTime() float32 {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+	return u.gameTime
 }
 
 func (u *User) SetSession(sess SessionSender) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	u.Session = sess
+	u.session = sess
 	u.dangleToken = nil
 	u.dangleRoom = nil
 }
@@ -66,7 +144,7 @@ func (u *User) MarkDangle() any {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.dangleToken = new(int)
-	u.dangleRoom = u.Room
+	u.dangleRoom = u.room
 	return u.dangleToken
 }
 
@@ -99,10 +177,11 @@ func (u *User) DangleToken() any {
 }
 
 func (u *User) TrySend(cmd protocol.ServerCommand) bool {
-	if u.Session == nil {
+	sess := u.GetSession()
+	if sess == nil {
 		return false
 	}
-	if sender, ok := u.Session.(SessionSender); ok {
+	if sender, ok := sess.(SessionSender); ok {
 		return sender.Send(cmd)
 	}
 	return false

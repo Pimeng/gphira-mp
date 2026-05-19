@@ -48,6 +48,15 @@ type ServerState struct {
 	adminDataPath string
 }
 
+// RuntimeSnapshot is an immutable view of frequently-read runtime fields.
+type RuntimeSnapshot struct {
+	Config              *config.ServerConfig
+	ServerName          string
+	ServerLang          *l10n.Language
+	ReplayEnabled       bool
+	RoomCreationEnabled bool
+}
+
 func NewServerState(cfg *config.ServerConfig, logger *utils.Logger, serverName, adminDataPath string) *ServerState {
 	s := &ServerState{
 		Config:              cfg,
@@ -98,6 +107,20 @@ func (s *ServerState) WithRLock(fn func()) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	fn()
+}
+
+// SnapshotRuntime returns a consistent view of runtime fields that may be
+// updated by ApplyConfig while other goroutines are serving requests.
+func (s *ServerState) SnapshotRuntime() RuntimeSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return RuntimeSnapshot{
+		Config:              s.Config,
+		ServerName:          s.ServerName,
+		ServerLang:          s.ServerLang,
+		ReplayEnabled:       s.ReplayEnabled,
+		RoomCreationEnabled: s.RoomCreationEnabled,
+	}
 }
 
 func (s *ServerState) LoadAdminData() error {

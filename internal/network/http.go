@@ -18,9 +18,9 @@ import (
 
 // HTTPServer provides HTTP endpoints for the Phira MP server.
 type HTTPServer struct {
-	server  *http.Server
-	state   *state.ServerState
-	logger  *utils.Logger
+	server   *http.Server
+	state    *state.ServerState
+	logger   *utils.Logger
 	wsServer *WSServer
 }
 
@@ -56,7 +56,8 @@ func StartHTTPServer(addr string, state *state.ServerState, logger *utils.Logger
 		}
 	}()
 
-	logger.Mark(state.ServerLang.Format("log-http-started", map[string]string{"addr": addr}))
+	runtime := state.SnapshotRuntime()
+	logger.Mark(runtime.ServerLang.Format("log-http-started", map[string]string{"addr": addr}))
 	return h, nil
 }
 
@@ -83,12 +84,12 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type roomInfo struct {
-		RoomID  string       `json:"roomid"`
-		Cycle   bool         `json:"cycle"`
-		Lock    bool         `json:"lock"`
-		Host    playerInfo   `json:"host"`
-		State   string       `json:"state"`
-		Chart   *struct {
+		RoomID string     `json:"roomid"`
+		Cycle  bool       `json:"cycle"`
+		Lock   bool       `json:"lock"`
+		Host   playerInfo `json:"host"`
+		State  string     `json:"state"`
+		Chart  *struct {
 			Name string `json:"name"`
 			ID   string `json:"id"`
 		} `json:"chart,omitempty"`
@@ -107,7 +108,7 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 			hostUser := h.state.Users[room.HostID]
 			hostName := ""
 			if hostUser != nil {
-				hostName = hostUser.Name
+				hostName = hostUser.GetName()
 			}
 
 			var players []playerInfo
@@ -116,7 +117,7 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 				u := h.state.Users[uid]
 				name := ""
 				if u != nil {
-					name = u.Name
+					name = u.GetName()
 				}
 				players = append(players, playerInfo{ID: uid, Name: name})
 			}
@@ -166,9 +167,10 @@ func (h *HTTPServer) handleRoomCreationConfig(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	runtime := h.state.SnapshotRuntime()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"enabled": h.state.RoomCreationEnabled,
+		"enabled": runtime.RoomCreationEnabled,
 	})
 }
 
@@ -177,9 +179,10 @@ func (h *HTTPServer) handleReplayConfig(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	runtime := h.state.SnapshotRuntime()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"enabled": h.state.ReplayEnabled,
+		"enabled": runtime.ReplayEnabled,
 	})
 }
 
@@ -197,8 +200,9 @@ func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		roomCount = len(h.state.Rooms)
 	})
 
+	runtime := h.state.SnapshotRuntime()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"server_name": h.state.ServerName,
+		"server_name": runtime.ServerName,
 		"online":      onlineCount,
 		"rooms":       roomCount,
 	})
@@ -224,7 +228,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
 
 func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -260,11 +263,12 @@ func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch from Phira API
-	endpoint := h.state.Config.PhiraAPIEndpoint
+	runtime := h.state.SnapshotRuntime()
+	endpoint := runtime.Config.PhiraAPIEndpoint
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
-	chart, err := FetchPhiraChart(endpoint, int32(id), h.state.Config.OutboundProxy)
+	chart, err := FetchPhiraChart(endpoint, int32(id), runtime.Config.OutboundProxy)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "chart-fetch-failed"})
 		return
@@ -297,7 +301,8 @@ func (h *HTTPServer) handleReplayDownload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	path := replay.ReplayFilePath(h.state.Config.ReplayBaseDir, int32(userID), int32(chartID), timestamp)
+	runtime := h.state.SnapshotRuntime()
+	path := replay.ReplayFilePath(runtime.Config.ReplayBaseDir, int32(userID), int32(chartID), timestamp)
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not-found"})

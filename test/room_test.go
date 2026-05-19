@@ -91,9 +91,9 @@ func TestRoomStateMachine(t *testing.T) {
 	// CheckAllReady with only host ready should not transition
 	cb := &game.RoomCallbacks{
 		UsersById: func(id int32) *game.User {
-			return &game.User{ID: id, Lang: l10n.New("zh-CN")}
+			return game.NewUser(id, fmt.Sprintf("User%d", id), "zh-CN")
 		},
-		Broadcast: func(cmd protocol.ServerCommand) error { return nil },
+		Broadcast:           func(cmd protocol.ServerCommand) error { return nil },
 		BroadcastToMonitors: func(cmd protocol.ServerCommand) {},
 		PickRandomUserId: func(ids []int32) int32 {
 			if len(ids) > 0 {
@@ -131,7 +131,7 @@ func TestRoomOnUserLeave(t *testing.T) {
 
 	cb := &game.RoomCallbacks{
 		UsersById: func(id int32) *game.User {
-			return &game.User{ID: id, Lang: l10n.New("zh-CN")}
+			return game.NewUser(id, fmt.Sprintf("User%d", id), "zh-CN")
 		},
 		Broadcast:           func(cmd protocol.ServerCommand) error { return nil },
 		BroadcastToMonitors: func(cmd protocol.ServerCommand) {},
@@ -144,7 +144,7 @@ func TestRoomOnUserLeave(t *testing.T) {
 		Lang: l10n.New("zh-CN"),
 	}
 
-	u2 := &game.User{ID: 2, Lang: l10n.New("zh-CN")}
+	u2 := game.NewUser(2, "User2", "zh-CN")
 	shouldDisband := room.OnUserLeave(u2, cb)
 	if shouldDisband {
 		t.Error("should not disband when non-host leaves")
@@ -154,7 +154,7 @@ func TestRoomOnUserLeave(t *testing.T) {
 	}
 
 	// Host leaves → disband
-	u1 := &game.User{ID: 1, Lang: l10n.New("zh-CN")}
+	u1 := game.NewUser(1, "User1", "zh-CN")
 	shouldDisband = room.OnUserLeave(u1, cb)
 	if !shouldDisband {
 		t.Error("should disband when host leaves")
@@ -219,7 +219,7 @@ func TestRoomGameSummary(t *testing.T) {
 	var chatMessages []protocol.Message
 	cb := &game.RoomCallbacks{
 		UsersById: func(id int32) *game.User {
-			return &game.User{ID: id, Name: fmt.Sprintf("User%d", id), Lang: l10n.New("zh-CN")}
+			return game.NewUser(id, fmt.Sprintf("User%d", id), "zh-CN")
 		},
 		Broadcast: func(cmd protocol.ServerCommand) error {
 			if cmd.Type == protocol.ServerCmdMessage && cmd.Message.Type == protocol.MessageChat {
@@ -336,11 +336,11 @@ func TestRoomContestAutoDisband(t *testing.T) {
 	disbanded := false
 	cb := &game.RoomCallbacks{
 		UsersById: func(id int32) *game.User {
-			return &game.User{ID: id, Name: fmt.Sprintf("User%d", id)}
+			return game.NewUser(id, fmt.Sprintf("User%d", id), "zh-CN")
 		},
-		Broadcast:  func(cmd protocol.ServerCommand) error { return nil },
+		Broadcast:   func(cmd protocol.ServerCommand) error { return nil },
 		DisbandRoom: func(r *game.Room) { disbanded = true },
-		Lang:       l10n.New("zh-CN"),
+		Lang:        l10n.New("zh-CN"),
 	}
 
 	_ = room.CheckAllReady(cb)
@@ -374,7 +374,9 @@ func TestRoomCycleHostRotation(t *testing.T) {
 			} else {
 				sess = sender2
 			}
-			return &game.User{ID: id, Name: fmt.Sprintf("User%d", id), Lang: l10n.New("zh-CN"), Session: sess}
+			u := game.NewUser(id, fmt.Sprintf("User%d", id), "zh-CN")
+			u.SetSession(sess)
+			return u
 		},
 		Broadcast: func(cmd protocol.ServerCommand) error { return nil },
 		Lang:      l10n.New("zh-CN"),

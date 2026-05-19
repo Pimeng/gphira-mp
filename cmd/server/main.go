@@ -185,7 +185,7 @@ func main() {
 		var kicked bool
 		server.State().WithRLock(func() {
 			if u := server.State().Users[id]; u != nil {
-				if s, ok := u.Session.(*network.Session); ok {
+				if s, ok := u.GetSession().(*network.Session); ok {
 					s.MarkLost()
 					kicked = true
 				}

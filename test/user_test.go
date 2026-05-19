@@ -12,11 +12,11 @@ func TestNewUser(t *testing.T) {
 	if u.ID != 42 {
 		t.Errorf("id = %d, want 42", u.ID)
 	}
-	if u.Name != "Alice" {
-		t.Errorf("name = %q, want Alice", u.Name)
+	if u.GetName() != "Alice" {
+		t.Errorf("name = %q, want Alice", u.GetName())
 	}
-	if u.GameTime != -1e9 {
-		t.Errorf("game time = %v, want -1e9", u.GameTime)
+	if u.GetGameTime() != -1e9 {
+		t.Errorf("game time = %v, want -1e9", u.GetGameTime())
 	}
 }
 
@@ -33,11 +33,9 @@ func TestUserToInfo(t *testing.T) {
 
 func TestUserCanMonitor(t *testing.T) {
 	u := game.NewUser(1, "Test", "zh-CN")
-	u.Monitor = true
 	if !u.CanMonitor([]int{1, 2, 3}) {
 		t.Error("user should be able to monitor")
 	}
-	u.Monitor = false
 	if u.CanMonitor([]int{2, 3}) {
 		t.Error("user should not be able to monitor without permission")
 	}

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Pimeng/gphira-mp-next/internal/game"
-	"github.com/Pimeng/gphira-mp-next/internal/l10n"
 	"github.com/Pimeng/gphira-mp-next/internal/replay"
 	"github.com/Pimeng/gphira-mp-next/internal/state"
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
@@ -101,6 +100,7 @@ func (s *Session) Send(cmd protocol.ServerCommand) bool {
 
 // OnCommand handles an incoming client command.
 func (s *Session) OnCommand(cmd protocol.ClientCommand) error {
+	runtime := s.State.SnapshotRuntime()
 	s.mu.Lock()
 	if s.lost || s.panicked {
 		s.mu.Unlock()
@@ -117,10 +117,10 @@ func (s *Session) OnCommand(cmd protocol.ClientCommand) error {
 	if s.waitingAuth {
 		s.mu.Unlock()
 		if cmd.Type == protocol.ClientCmdAuthenticate {
-			s.State.Logger.DebugL(s.State.ServerLang, "log-auth-received", map[string]string{"session": s.ID, "remote": s.RemoteIP})
+			s.State.Logger.DebugL(runtime.ServerLang, "log-auth-received", map[string]string{"session": s.ID, "remote": s.RemoteIP})
 			return s.handleAuthenticate(cmd.Token)
 		}
-		s.State.Logger.DebugL(s.State.ServerLang, "log-command-before-auth", map[string]string{"session": s.ID, "cmd": fmt.Sprintf("%v", cmd.Type)})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-command-before-auth", map[string]string{"session": s.ID, "cmd": fmt.Sprintf("%v", cmd.Type)})
 		return nil
 	}
 	s.mu.Unlock()
@@ -140,15 +140,16 @@ func (s *Session) OnCommand(cmd protocol.ClientCommand) error {
 }
 
 func (s *Session) handleAuthenticate(token string) error {
-	endpoint := s.State.Config.PhiraAPIEndpoint
+	runtime := s.State.SnapshotRuntime()
+	endpoint := runtime.Config.PhiraAPIEndpoint
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
 
-	info, err := FetchPhiraUserInfo(endpoint, token, s.State.Config.OutboundProxy)
+	info, err := FetchPhiraUserInfo(endpoint, token, runtime.Config.OutboundProxy)
 	if err != nil {
-		s.State.Logger.DebugL(s.State.ServerLang, "log-auth-api-failed", map[string]string{"session": s.ID, "error": err.Error()})
-		s.State.Logger.WarnL(s.State.ServerLang, "log-auth-failed", map[string]string{"session": s.ID, "error": err.Error()})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-auth-api-failed", map[string]string{"session": s.ID, "error": err.Error()})
+		s.State.Logger.WarnL(runtime.ServerLang, "log-auth-failed", map[string]string{"session": s.ID, "error": err.Error()})
 		_ = s.Send(protocol.ServerCommand{
 			Type:       protocol.ServerCmdAuthenticate,
 			AuthResult: protocol.Err[protocol.AuthenticateResult](err.Error()),
@@ -162,13 +163,12 @@ func (s *Session) handleAuthenticate(token string) error {
 	var wasDangling bool
 	s.State.WithLock(func() {
 		if u := s.State.Users[info.ID]; u != nil {
-			if sess, ok := u.Session.(*Session); ok && sess != s {
+			if sess, ok := u.GetSession().(*Session); ok && sess != s {
 				existingSession = sess
 			}
-			wasDangling = u.Session == nil && u.DangleRoom() != nil
+			wasDangling = !u.HasSession() && u.DangleRoom() != nil
 			u.SetSession(s)
-			u.Name = info.Name
-			u.Lang = l10n.New(info.Language)
+			u.SetIdentity(info.Name, info.Language)
 			s.user = u
 		}
 		if s.user == nil {
@@ -184,17 +184,17 @@ func (s *Session) handleAuthenticate(token string) error {
 	}
 
 	// If the user was dangling, restore room state broadcast to notify others.
-	if wasDangling && s.user.Room != nil {
-		room := s.user.Room
-		s.State.Logger.InfoL(s.State.ServerLang, "log-user-reconnected", map[string]string{"session": s.ID, "user": s.user.Name, "room": string(room.ID)})
+	if wasDangling && s.user.GetRoom() != nil {
+		room := s.user.GetRoom()
+		s.State.Logger.InfoL(runtime.ServerLang, "log-user-reconnected", map[string]string{"session": s.ID, "user": s.user.GetName(), "room": string(room.ID)})
 		_ = s.broadcastRoom(room, protocol.ServerCommand{Type: protocol.ServerCmdOnJoinRoom, UserInfo: s.user.ToInfo()})
-		_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageJoinRoom, User: s.user.ID, Name: s.user.Name})
+		_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageJoinRoom, User: s.user.ID, Name: s.user.GetName()})
 	}
 
 	var clientRoom *protocol.ClientRoomState
-	if s.user.Room != nil {
+	if s.user.GetRoom() != nil {
 		users := s.collectUsers()
-		crs := s.user.Room.ClientState(s.user.ID, users)
+		crs := s.user.GetRoom().ClientState(s.user.ID, users)
 		clientRoom = &crs
 	}
 
@@ -213,10 +213,10 @@ func (s *Session) handleAuthenticate(token string) error {
 
 	SendWelcomeExtras(s.user, s.State, s.sendSystemChat)
 
-	s.State.Logger.InfoL(s.State.ServerLang, "log-user-authenticated", map[string]string{"session": s.ID, "user": info.Name, "id": fmt.Sprintf("%d", info.ID)})
+	s.State.Logger.InfoL(runtime.ServerLang, "log-user-authenticated", map[string]string{"session": s.ID, "user": info.Name, "id": fmt.Sprintf("%d", info.ID)})
 
 	if clientRoom != nil {
-		s.State.Logger.DebugL(s.State.ServerLang, "log-auth-restored-room", map[string]string{"session": s.ID, "user": info.Name, "room": string(s.user.Room.ID)})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-auth-restored-room", map[string]string{"session": s.ID, "user": info.Name, "room": string(s.user.GetRoom().ID)})
 	}
 	return nil
 }
@@ -231,16 +231,97 @@ func (s *Session) collectUsers() map[int32]*game.User {
 	return users
 }
 
+func (s *Session) checkRoomAllReady(room *game.Room) {
+	runtime := s.State.SnapshotRuntime()
+	users := s.collectUsers()
+	participantIDs := room.AllParticipantIDs()
+	userIDs := room.UserIDs()
+	monitorIDs := room.MonitorIDs()
+	_ = room.CheckAllReady(&game.RoomCallbacks{
+		UsersById: func(id int32) *game.User {
+			return users[id]
+		},
+		Broadcast: func(cmd protocol.ServerCommand) error {
+			for _, id := range participantIDs {
+				if u := users[id]; u != nil {
+					_ = u.TrySend(cmd)
+				}
+			}
+			return nil
+		},
+		BroadcastToMonitors: func(cmd protocol.ServerCommand) {
+			for _, id := range monitorIDs {
+				if u := users[id]; u != nil {
+					_ = u.TrySend(cmd)
+				}
+			}
+		},
+		PickRandomUserId: utils.RandomPickInt32,
+		Lang:             runtime.ServerLang,
+		Logger:           s.State.Logger,
+		OnEnterPlaying: func(r *game.Room) {
+			if runtime.ReplayEnabled && s.State.ReplayRecorder != nil && r.ReplayEligible {
+				var participants []replay.Participant
+				for _, uid := range userIDs {
+					name := ""
+					if u := users[uid]; u != nil {
+						name = u.GetName()
+					}
+					participants = append(participants, replay.Participant{ID: uid, Name: name})
+				}
+				chartID := 0
+				chartName := ""
+				if r.Chart != nil {
+					chartID = r.Chart.ID
+					chartName = r.Chart.Name
+				}
+				s.State.ReplayRecorder.StartRoom(r.ID, chartID, chartName, participants)
+			}
+		},
+		OnGameEnd: func(r *game.Room) {
+			if runtime.ReplayEnabled && s.State.ReplayRecorder != nil && r.ReplayEligible {
+				s.State.ReplayRecorder.EndRoom(r.ID)
+			}
+			if s.State.AutoUploadCallback != nil && r.Chart != nil {
+				if playing, ok := r.State.(*game.StatePlaying); ok {
+					chartID := int32(r.Chart.ID)
+					var roomFiles []replay.FileInfo
+					if s.State.ReplayRecorder != nil {
+						roomFiles = s.State.ReplayRecorder.ListRoomFiles(r.ID)
+					}
+					for userID, recordData := range playing.Results {
+						for _, fi := range roomFiles {
+							if fi.UserID == userID {
+								s.State.AutoUploadCallback(userID, chartID, fi.Timestamp, recordData.ID)
+								break
+							}
+						}
+					}
+				}
+			}
+			if s.State.ReplayRecorder != nil {
+				s.State.ReplayRecorder.ClearRoomFiles(r.ID)
+			}
+		},
+		NotifyWebSocket: func(rid roomid.RoomID) {
+			if s.State.WSServer != nil {
+				s.State.WSServer.BroadcastRoomUpdate(rid, nil)
+			}
+		},
+	})
+}
+
 func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, error) {
+	runtime := s.State.SnapshotRuntime()
 	ctx := &CommandContext{
-		State: s.State,
-		User:  s.user,
+		State:         s.State,
+		User:          s.user,
 		MonitorBuffer: s.monitorBuf,
 		RequireRoom: func() *game.Room {
-			if s.user.Room == nil {
-				panic(s.user.Lang.Format("room-no-room", nil))
+			if s.user.GetRoom() == nil {
+				panic(s.user.GetLang().Format("room-no-room", nil))
 			}
-			return s.user.Room
+			return s.user.GetRoom()
 		},
 		BroadcastRoom: func(room *game.Room, cmd protocol.ServerCommand) error {
 			for _, id := range room.AllParticipantIDs() {
@@ -273,49 +354,47 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 			}
 		},
 		ProcessCreateRoom: func(id roomid.RoomID) error {
-			if s.user.Room != nil {
-				return fmt.Errorf("%s", s.user.Lang.Format("room-already-in-room", nil))
+			if s.user.GetRoom() != nil {
+				return fmt.Errorf("%s", s.user.GetLang().Format("room-already-in-room", nil))
 			}
 			if !s.State.RoomCreationEnabled {
-				return fmt.Errorf("%s", s.user.Lang.Format("room-creation-disabled", nil))
+				return fmt.Errorf("%s", s.user.GetLang().Format("room-creation-disabled", nil))
 			}
-			maxUsers := s.State.Config.RoomMaxUsers
+			maxUsers := runtime.Config.RoomMaxUsers
 			if maxUsers < 1 || maxUsers > 64 {
 				maxUsers = 8
 			}
-			room := game.NewRoom(id, s.user.ID, maxUsers, s.State.ReplayEnabled)
+			room := game.NewRoom(id, s.user.ID, maxUsers, runtime.ReplayEnabled)
 			s.State.WithLock(func() {
 				if _, exists := s.State.Rooms[id]; exists {
-					panic(s.user.Lang.Format("create-id-occupied", nil))
+					panic(s.user.GetLang().Format("create-id-occupied", nil))
 				}
 				s.State.Rooms[id] = room
 			})
-			s.user.Room = room
-			s.user.Monitor = false
+			s.user.SetRoom(room, false)
 			_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageCreateRoom, User: s.user.ID})
-			s.State.Logger.LogRoomMark(s.State.ServerLang, room.ID, "log-room-created", map[string]string{"user": s.user.Name, "room": string(room.ID)})
+			s.State.Logger.LogRoomMark(runtime.ServerLang, room.ID, "log-room-created", map[string]string{"user": s.user.GetName(), "room": string(room.ID)})
 			return nil
 		},
 		ProcessJoinRoom: func(id roomid.RoomID, monitor bool) (*protocol.JoinRoomResponse, error) {
-			if s.user.Room != nil {
-				return nil, fmt.Errorf("%s", s.user.Lang.Format("room-already-in-room", nil))
+			if s.user.GetRoom() != nil {
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("room-already-in-room", nil))
 			}
 			var room *game.Room
 			s.State.WithRLock(func() {
-			room = s.State.Rooms[id]
+				room = s.State.Rooms[id]
 			})
 			if room == nil {
-				return nil, fmt.Errorf("%s", s.user.Lang.Format("room-not-found", nil))
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("room-not-found", nil))
 			}
-			if err := room.ValidateJoin(s.user.ID, monitor, s.State.Config.Monitors, room.State); err != nil {
+			if err := room.ValidateJoin(s.user.ID, monitor, runtime.Config.Monitors, room.State); err != nil {
 				return nil, err
 			}
 			if !room.AddUser(s.user.ID, monitor) {
-				return nil, fmt.Errorf("%s", s.user.Lang.Format("join-room-full", nil))
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("join-room-full", nil))
 			}
-			s.user.Room = room
-			s.user.Monitor = monitor
-			room.HandleJoin(s.user.ID, room.State)
+			s.user.SetRoom(room, monitor)
+			room.OnUserJoin(s.user.ID, monitor)
 
 			users := s.collectUsers()
 			resp := protocol.JoinRoomResponse{
@@ -331,109 +410,43 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 
 			// Broadcast OnJoinRoom to existing participants, then JoinRoom message
 			_ = s.broadcastRoom(room, protocol.ServerCommand{Type: protocol.ServerCmdOnJoinRoom, UserInfo: s.user.ToInfo()})
-			_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageJoinRoom, User: s.user.ID, Name: s.user.Name})
+			_ = s.broadcastRoomMessage(room, protocol.Message{Type: protocol.MessageJoinRoom, User: s.user.ID, Name: s.user.GetName()})
 
 			suffix := ""
 			if monitor {
-				suffix = s.State.ServerLang.Format("label-monitor-suffix", nil)
+				suffix = runtime.ServerLang.Format("label-monitor-suffix", nil)
 			}
-			s.State.Logger.LogRoomMark(s.State.ServerLang, room.ID, "log-room-joined", map[string]string{"user": s.user.Name, "suffix": suffix, "room": string(room.ID)})
+			s.State.Logger.LogRoomMark(runtime.ServerLang, room.ID, "log-room-joined", map[string]string{"user": s.user.GetName(), "suffix": suffix, "room": string(room.ID)})
 
 			return &resp, nil
 		},
 		DisbandRoom: func(room *game.Room) {
 			s.State.WithLock(func() {
 				delete(s.State.Rooms, room.ID)
+				for _, u := range s.State.Users {
+					if u.GetRoom() == room {
+						u.ClearRoom()
+					}
+				}
 			})
+			if runtime.ReplayEnabled && s.State.ReplayRecorder != nil {
+				s.State.ReplayRecorder.EndRoom(room.ID)
+			}
 		},
-		CheckRoomAllReady: func(room *game.Room) {
-			users := s.collectUsers()
-			participantIDs := room.AllParticipantIDs()
-			userIDs := room.UserIDs()
-			monitorIDs := room.MonitorIDs()
-			_ = room.CheckAllReady(&game.RoomCallbacks{
-				UsersById: func(id int32) *game.User {
-					return users[id]
-				},
-				Broadcast: func(cmd protocol.ServerCommand) error {
-					for _, id := range participantIDs {
-						if u := users[id]; u != nil {
-							_ = u.TrySend(cmd)
-						}
-					}
-					return nil
-				},
-				BroadcastToMonitors: func(cmd protocol.ServerCommand) {
-					for _, id := range monitorIDs {
-						if u := users[id]; u != nil {
-							_ = u.TrySend(cmd)
-						}
-					}
-				},
-				PickRandomUserId: utils.RandomPickInt32,
-				Lang:   s.State.ServerLang,
-				Logger: s.State.Logger,
-				OnEnterPlaying: func(r *game.Room) {
-					if s.State.ReplayEnabled && s.State.ReplayRecorder != nil && r.ReplayEligible {
-						var participants []replay.Participant
-						for _, uid := range userIDs {
-							name := ""
-							if u := users[uid]; u != nil {
-								name = u.Name
-							}
-							participants = append(participants, replay.Participant{ID: uid, Name: name})
-						}
-						chartID := 0
-						chartName := ""
-						if r.Chart != nil {
-							chartID = r.Chart.ID
-							chartName = r.Chart.Name
-						}
-						s.State.ReplayRecorder.StartRoom(r.ID, chartID, chartName, participants)
-					}
-				},
-				OnGameEnd: func(r *game.Room) {
-					if s.State.ReplayEnabled && s.State.ReplayRecorder != nil && r.ReplayEligible {
-						s.State.ReplayRecorder.EndRoom(r.ID)
-					}
-					if s.State.AutoUploadCallback != nil && r.Chart != nil {
-						if playing, ok := r.State.(*game.StatePlaying); ok {
-							chartID := int32(r.Chart.ID)
-							var roomFiles []replay.FileInfo
-							if s.State.ReplayRecorder != nil {
-								roomFiles = s.State.ReplayRecorder.ListRoomFiles(r.ID)
-							}
-							for userID, recordData := range playing.Results {
-								for _, fi := range roomFiles {
-									if fi.UserID == userID {
-										s.State.AutoUploadCallback(userID, chartID, fi.Timestamp, recordData.ID)
-										break
-									}
-								}
-							}
-						}
-					}
-				},
-				NotifyWebSocket: func(rid roomid.RoomID) {
-					if s.State.WSServer != nil {
-						s.State.WSServer.BroadcastRoomUpdate(rid, nil)
-					}
-				},
-			})
-		},
+		CheckRoomAllReady: s.checkRoomAllReady,
 		FetchChart: func(id int32) (*game.Chart, error) {
 			if s.State.ChartCache != nil {
 				if cached := s.State.ChartCache.Get(id); cached != nil {
 					return &game.Chart{ID: int(cached.ID), Name: cached.Name}, nil
 				}
 			}
-			endpoint := s.State.Config.PhiraAPIEndpoint
+			endpoint := runtime.Config.PhiraAPIEndpoint
 			if endpoint == "" {
 				endpoint = defaultPhiraAPIEndpoint
 			}
-			chart, err := FetchPhiraChart(endpoint, id, s.State.Config.OutboundProxy)
+			chart, err := FetchPhiraChart(endpoint, id, runtime.Config.OutboundProxy)
 			if err != nil {
-				return nil, fmt.Errorf("%s", s.user.Lang.Format("chart-fetch-failed", nil))
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("chart-fetch-failed", nil))
 			}
 			if s.State.ChartCache != nil {
 				s.State.ChartCache.Set(chart.ID, chart.Name)
@@ -441,13 +454,13 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 			return &game.Chart{ID: int(chart.ID), Name: chart.Name}, nil
 		},
 		FetchRecord: func(id int32) (*PhiraRecord, error) {
-			endpoint := s.State.Config.PhiraAPIEndpoint
+			endpoint := runtime.Config.PhiraAPIEndpoint
 			if endpoint == "" {
 				endpoint = defaultPhiraAPIEndpoint
 			}
-			record, err := FetchPhiraRecord(endpoint, id, s.State.Config.OutboundProxy)
+			record, err := FetchPhiraRecord(endpoint, id, runtime.Config.OutboundProxy)
 			if err != nil {
-				return nil, fmt.Errorf("%s", s.user.Lang.Format("record-fetch-failed", nil))
+				return nil, fmt.Errorf("%s", s.user.GetLang().Format("record-fetch-failed", nil))
 			}
 			return record, nil
 		},
@@ -457,6 +470,7 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 
 // CheckHeartbeat checks if the session has timed out.
 func (s *Session) CheckHeartbeat(now time.Time) {
+	runtime := s.State.SnapshotRuntime()
 	s.mu.Lock()
 	if s.lost {
 		s.mu.Unlock()
@@ -467,13 +481,13 @@ func (s *Session) CheckHeartbeat(now time.Time) {
 	// for the heartbeat timeout.
 	if s.stream != nil && s.stream.IsClosed() {
 		s.mu.Unlock()
-		s.State.Logger.DebugL(s.State.ServerLang, "log-stream-closed", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-stream-closed", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
 		s.markLost()
 		return
 	}
 	if now.Sub(s.lastRecv) > heartbeatDisconnectTimeoutMs*time.Millisecond {
 		s.mu.Unlock()
-		s.State.Logger.DebugL(s.State.ServerLang, "log-heartbeat-timeout", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-heartbeat-timeout", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID())})
 		s.markLost()
 		return
 	}
@@ -489,12 +503,13 @@ func (s *Session) userID() int32 {
 
 func (s *Session) userName() string {
 	if s.user != nil {
-		return s.user.Name
+		return s.user.GetName()
 	}
 	return ""
 }
 
 func (s *Session) markLost() {
+	runtime := s.State.SnapshotRuntime()
 	s.mu.Lock()
 	if s.lost {
 		s.mu.Unlock()
@@ -504,7 +519,7 @@ func (s *Session) markLost() {
 	preserveRoom := s.preserveRoomOnLost
 	s.mu.Unlock()
 
-	s.State.Logger.DebugL(s.State.ServerLang, "log-session-marked-lost", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID()), "preserveRoom": fmt.Sprintf("%v", preserveRoom)})
+	s.State.Logger.DebugL(runtime.ServerLang, "log-session-marked-lost", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", s.userID()), "preserveRoom": fmt.Sprintf("%v", preserveRoom)})
 
 	s.monitorBuf.Destroy()
 	if s.stream != nil {
@@ -530,15 +545,15 @@ func (s *Session) markLost() {
 		_, isBanned = s.State.BannedUsers[user.ID]
 	})
 	if isBanned {
-		s.State.Logger.DebugL(s.State.ServerLang, "log-banned-user-disconnected", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-banned-user-disconnected", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName()})
 		s.handleUserLeaveAndRemove(user)
 		return
 	}
 
 	// If currently playing, leave room immediately (no dangling).
-	if user.Room != nil {
-		if _, playing := user.Room.State.(*game.StatePlaying); playing {
-			s.State.Logger.DebugL(s.State.ServerLang, "log-user-disconnected-playing", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(user.Room.ID)})
+	if user.GetRoom() != nil {
+		if _, playing := user.GetRoom().State.(*game.StatePlaying); playing {
+			s.State.Logger.DebugL(runtime.ServerLang, "log-user-disconnected-playing", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName(), "room": string(user.GetRoom().ID)})
 			s.handleUserLeaveAndRemove(user)
 			return
 		}
@@ -555,10 +570,10 @@ func (s *Session) markLost() {
 	// Normal disconnect: mark dangling, keep room association.
 	user.MarkDangle()
 	roomID := ""
-	if user.Room != nil {
-		roomID = string(user.Room.ID)
+	if user.GetRoom() != nil {
+		roomID = string(user.GetRoom().ID)
 	}
-	s.State.Logger.DebugL(s.State.ServerLang, "log-user-dangling", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": roomID})
+	s.State.Logger.DebugL(runtime.ServerLang, "log-user-dangling", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName(), "room": roomID})
 	s.scheduleDangleCleanup(user)
 }
 
@@ -566,9 +581,10 @@ func (s *Session) markLost() {
 // deletes them from the global user map. Used for banned users and playing-state
 // disconnects where dangling is not desired.
 func (s *Session) handleUserLeaveAndRemove(user *game.User) {
-	s.State.Logger.DebugL(s.State.ServerLang, "log-user-leave-remove", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
-	if user.Room != nil {
-		room := user.Room
+	runtime := s.State.SnapshotRuntime()
+	s.State.Logger.DebugL(runtime.ServerLang, "log-user-leave-remove", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName()})
+	if user.GetRoom() != nil {
+		room := user.GetRoom()
 		participantIDs := room.AllParticipantIDs()
 		shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 			Broadcast: func(cmd protocol.ServerCommand) error {
@@ -579,18 +595,20 @@ func (s *Session) handleUserLeaveAndRemove(user *game.User) {
 				}
 				return nil
 			},
-			UsersById:      s.findUser,
+			UsersById:        s.findUser,
 			PickRandomUserId: utils.RandomPickInt32,
-			Lang:           s.State.ServerLang,
-			Logger:         s.State.Logger,
+			Lang:             runtime.ServerLang,
+			Logger:           s.State.Logger,
 		})
 		if shouldDisband {
-			s.State.Logger.LogRoomInfo(s.State.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
+			s.State.Logger.LogRoomInfo(runtime.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
 			s.State.WithLock(func() {
 				delete(s.State.Rooms, room.ID)
 			})
+		} else {
+			s.checkRoomAllReady(room)
 		}
-		user.Room = nil
+		user.ClearRoom()
 	}
 	s.State.WithLock(func() {
 		delete(s.State.Users, user.ID)
@@ -601,6 +619,7 @@ func (s *Session) handleUserLeaveAndRemove(user *game.User) {
 // reconnected (session still nil), it performs the actual room leave and
 // removes the user from the global map.
 func (s *Session) scheduleDangleCleanup(user *game.User) {
+	runtime := s.State.SnapshotRuntime()
 	token := user.DangleToken()
 	go func() {
 		time.Sleep(dangleTimeoutMs * time.Millisecond)
@@ -608,16 +627,16 @@ func (s *Session) scheduleDangleCleanup(user *game.User) {
 			return
 		}
 		// Double-check: if user reconnected, don't remove.
-		if user.Session != nil {
-			s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-skipped", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
+		if user.HasSession() {
+			s.State.Logger.DebugL(runtime.ServerLang, "log-dangle-cleanup-skipped", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName()})
 			return
 		}
-		s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-started", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name})
+		s.State.Logger.DebugL(runtime.ServerLang, "log-dangle-cleanup-started", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName()})
 
 		dangleRoom := user.DangleRoom()
 		if dangleRoom != nil {
 			room := dangleRoom
-			s.State.Logger.DebugL(s.State.ServerLang, "log-dangle-cleanup-leaving", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.Name, "room": string(room.ID)})
+			s.State.Logger.DebugL(runtime.ServerLang, "log-dangle-cleanup-leaving", map[string]string{"session": s.ID, "user": fmt.Sprintf("%d", user.ID), "name": user.GetName(), "room": string(room.ID)})
 			participantIDs := room.AllParticipantIDs()
 			shouldDisband := room.OnUserLeave(user, &game.RoomCallbacks{
 				Broadcast: func(cmd protocol.ServerCommand) error {
@@ -628,10 +647,10 @@ func (s *Session) scheduleDangleCleanup(user *game.User) {
 					}
 					return nil
 				},
-				UsersById:      s.findUser,
+				UsersById:        s.findUser,
 				PickRandomUserId: utils.RandomPickInt32,
-				Lang:           s.State.ServerLang,
-				Logger:         s.State.Logger,
+				Lang:             runtime.ServerLang,
+				Logger:           s.State.Logger,
 				NotifyWebSocket: func(rid roomid.RoomID) {
 					if s.State.WSServer != nil {
 						s.State.WSServer.BroadcastRoomUpdate(rid, nil)
@@ -639,12 +658,14 @@ func (s *Session) scheduleDangleCleanup(user *game.User) {
 				},
 			})
 			if shouldDisband {
-				s.State.Logger.LogRoomInfo(s.State.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
+				s.State.Logger.LogRoomInfo(runtime.ServerLang, room.ID, "log-room-recycled", map[string]string{"room": string(room.ID)})
 				s.State.WithLock(func() {
 					delete(s.State.Rooms, room.ID)
 				})
+			} else {
+				s.checkRoomAllReady(room)
 			}
-			user.Room = nil
+			user.ClearRoom()
 		}
 
 		s.State.WithLock(func() {

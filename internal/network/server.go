@@ -58,7 +58,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 	}
 
 	if err := s.state.LoadAdminData(); err != nil {
-		logger.WarnL(s.state.ServerLang, "log-admin-data-load-failed", map[string]string{"err": err.Error()})
+		logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-admin-data-load-failed", map[string]string{"err": err.Error()})
 	}
 
 	go s.acceptLoop()
@@ -68,15 +68,16 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 		httpAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.HTTPPort))
 		httpServer, err := StartHTTPServer(httpAddr, s.state, logger)
 		if err != nil {
-			logger.WarnL(s.state.ServerLang, "log-http-start-failed", map[string]string{"err": err.Error()})
+			logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-http-start-failed", map[string]string{"err": err.Error()})
 		} else {
 			s.httpServer = httpServer
 		}
 	}
 
-	logger.Mark(s.state.ServerLang.Format("log-server-listening", map[string]string{"addr": addr}))
-	logger.Mark(s.state.ServerLang.Format("log-server-info", map[string]string{
-		"name":  s.state.ServerName,
+	runtime := s.state.SnapshotRuntime()
+	logger.Mark(runtime.ServerLang.Format("log-server-listening", map[string]string{"addr": addr}))
+	logger.Mark(runtime.ServerLang.Format("log-server-info", map[string]string{
+		"name":  runtime.ServerName,
 		"level": strings.ToUpper(logger.GetLevel()),
 	}))
 
@@ -92,7 +93,7 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 				envCfg := config.LoadEnvConfig()
 				newCfg := config.MergeConfig(config.MergeConfig(config.DefaultConfig(), loaded), envCfg)
 				s.state.ApplyConfig(newCfg)
-				logger.MarkL(s.state.ServerLang, "log-config-reloaded", nil)
+				logger.MarkL(s.state.SnapshotRuntime().ServerLang, "log-config-reloaded", nil)
 			})
 			s.watcher.Start()
 		}
@@ -108,15 +109,15 @@ func (s *Server) acceptLoop() {
 			if s.isClosed() {
 				return
 			}
-			s.logger.WarnL(s.state.ServerLang, "log-accept-failed", map[string]string{"err": err.Error()})
+			s.logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-accept-failed", map[string]string{"err": err.Error()})
 			continue
 		}
 		if !s.rateLimiter.Allow(conn.RemoteAddr().String()) {
-			s.logger.WarnL(s.state.ServerLang, "log-rate-limit-exceeded", map[string]string{"remote": conn.RemoteAddr().String()}, &utils.LogContext{IP: conn.RemoteAddr().String(), IsConnectionLog: true})
+			s.logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-rate-limit-exceeded", map[string]string{"remote": conn.RemoteAddr().String()}, &utils.LogContext{IP: conn.RemoteAddr().String(), IsConnectionLog: true})
 			conn.Close()
 			continue
 		}
-		s.logger.DebugL(s.state.ServerLang, "log-connection-accepted", map[string]string{"remote": conn.RemoteAddr().String()})
+		s.logger.DebugL(s.state.SnapshotRuntime().ServerLang, "log-connection-accepted", map[string]string{"remote": conn.RemoteAddr().String()})
 		go s.handleConn(conn)
 	}
 }
@@ -124,23 +125,24 @@ func (s *Server) acceptLoop() {
 func (s *Server) handleConn(conn net.Conn) {
 	id := newUUID()
 	remoteIP := conn.RemoteAddr().String()
+	runtime := s.state.SnapshotRuntime()
 
 	// HAProxy PROXY Protocol
-	if config.DerefBool(s.cfg.HAProxyProtocol, false) {
+	if config.DerefBool(runtime.Config.HAProxyProtocol, false) {
 		info, wrappedConn, err := ParseProxyProtocol(conn, 5*time.Second)
 		if err != nil {
-			s.logger.WarnL(s.state.ServerLang, "log-proxy-protocol-failed", map[string]string{"err": err.Error()}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+			s.logger.WarnL(runtime.ServerLang, "log-proxy-protocol-failed", map[string]string{"err": err.Error()}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 			conn.Close()
 			return
 		}
 		if info != nil {
 			remoteIP = fmt.Sprintf("%s:%d", info.SourceAddress, info.SourcePort)
-			s.logger.DebugL(s.state.ServerLang, "log-proxy-protocol-ok", map[string]string{"source": remoteIP}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+			s.logger.DebugL(runtime.ServerLang, "log-proxy-protocol-ok", map[string]string{"source": remoteIP}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 		}
 		conn = wrappedConn
 	}
 
-	s.logger.DebugL(s.state.ServerLang, "log-new-connection", map[string]string{"id": id, "remote": remoteIP}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+	s.logger.DebugL(runtime.ServerLang, "log-new-connection", map[string]string{"id": id, "remote": remoteIP}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 
 	sess := NewSession(id, conn, s.state, remoteIP)
 
@@ -168,10 +170,10 @@ func (s *Server) handleConn(conn net.Conn) {
 	strm, err := stream.New(conn, codec, sess.OnCommand, func(cmd protocol.ClientCommand) bool {
 		return cmd.Type == protocol.ClientCmdPing
 	}, func(phase string, err error) {
-		s.logger.WarnL(s.state.ServerLang, "log-stream-error", map[string]string{"id": id, "phase": phase, "err": fmt.Sprintf("%v", err)}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
+		s.logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-stream-error", map[string]string{"id": id, "phase": phase, "err": fmt.Sprintf("%v", err)}, &utils.LogContext{IP: remoteIP, IsConnectionLog: true})
 	})
 	if err != nil {
-		s.logger.WarnL(s.state.ServerLang, "log-handshake-failed", map[string]string{"id": id, "err": err.Error()})
+		s.logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-handshake-failed", map[string]string{"id": id, "err": err.Error()})
 		conn.Close()
 		return
 	}
@@ -180,10 +182,12 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	s.mu.Lock()
 	s.sessions[id] = sess
-	s.state.Sessions[id] = sess
 	s.mu.Unlock()
+	s.state.WithLock(func() {
+		s.state.Sessions[id] = sess
+	})
 
-	s.logger.DebugL(s.state.ServerLang, "log-handshake-ok", map[string]string{"id": id})
+	s.logger.DebugL(s.state.SnapshotRuntime().ServerLang, "log-handshake-ok", map[string]string{"id": id})
 }
 
 func (s *Server) heartbeatLoop() {
@@ -243,7 +247,7 @@ func (s *Server) Close() error {
 	s.mu.Unlock()
 	if s.httpServer != nil {
 		if err := s.httpServer.Close(); err != nil {
-			s.logger.WarnL(s.state.ServerLang, "log-http-close-error", map[string]string{"err": err.Error()})
+			s.logger.WarnL(s.state.SnapshotRuntime().ServerLang, "log-http-close-error", map[string]string{"err": err.Error()})
 		}
 	}
 	if s.watcher != nil {

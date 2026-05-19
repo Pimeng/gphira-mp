@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/Pimeng/gphira-mp-next/pkg/roomid"
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
@@ -17,27 +17,30 @@ var upgrader = websocket.Upgrader{
 
 // WSClient represents a connected WebSocket client.
 type WSClient struct {
-	conn     *websocket.Conn
-	roomID   roomid.RoomID
-	userID   int32
-	isAdmin  bool
-	isAlive  bool
-	send     chan []byte
-	server   *WSServer
+	conn    *websocket.Conn
+	roomID  roomid.RoomID
+	userID  int32
+	isAdmin bool
+	isAlive bool
+	closed  bool
+	send    chan []byte
+	server  *WSServer
+	writeMu sync.Mutex
+	stateMu sync.RWMutex
 }
 
 // WSServer manages WebSocket connections and broadcasts.
 type WSServer struct {
 	state *HTTPServer
 
-	mu       sync.RWMutex
-	clients  map[*WSClient]struct{}
-	rooms    map[roomid.RoomID]map[*WSClient]struct{}
-	admins   map[*WSClient]struct{}
-	register chan *WSClient
-	leave    chan *WSClient
+	mu        sync.RWMutex
+	clients   map[*WSClient]struct{}
+	rooms     map[roomid.RoomID]map[*WSClient]struct{}
+	admins    map[*WSClient]struct{}
+	register  chan *WSClient
+	leave     chan *WSClient
 	broadcast chan wsBroadcastMsg
-	stop     chan struct{}
+	stop      chan struct{}
 }
 
 type wsBroadcastMsg struct {
@@ -73,6 +76,7 @@ func (s *WSServer) Stop() {
 
 // ServeHTTP handles WebSocket upgrade requests.
 func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	runtime := s.state.state.SnapshotRuntime()
 	if r.URL.Path != "/ws" {
 		http.NotFound(w, r)
 		return
@@ -80,7 +84,7 @@ func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		if s.state.state.Logger != nil {
-			s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-upgrade-failed", map[string]string{"err": fmt.Sprintf("%v", err), "remote": r.RemoteAddr})
+			s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-upgrade-failed", map[string]string{"err": fmt.Sprintf("%v", err), "remote": r.RemoteAddr})
 		}
 		return
 	}
@@ -91,7 +95,7 @@ func (s *WSServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		server:  s,
 	}
 	if s.state.state.Logger != nil {
-		s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-connected", map[string]string{"remote": conn.RemoteAddr().String()})
+		s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-connected", map[string]string{"remote": conn.RemoteAddr().String()})
 	}
 	s.register <- client
 
@@ -116,6 +120,7 @@ func (s *WSServer) BroadcastRoomLog(roomID roomid.RoomID, message string, timest
 }
 
 func (s *WSServer) run() {
+	runtime := s.state.state.SnapshotRuntime()
 	for {
 		select {
 		case client := <-s.register:
@@ -123,12 +128,15 @@ func (s *WSServer) run() {
 			s.clients[client] = struct{}{}
 			s.mu.Unlock()
 			if s.state.state.Logger != nil {
-				s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-client-registered", map[string]string{"clients": fmt.Sprintf("%d", len(s.clients))})
+				s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-client-registered", map[string]string{"clients": fmt.Sprintf("%d", len(s.clients))})
 			}
 
 		case client := <-s.leave:
+			s.mu.RLock()
+			leavingRoom := client.roomID
+			s.mu.RUnlock()
 			if s.state.state.Logger != nil {
-				s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-client-leaving", map[string]string{"room": string(client.roomID)})
+				s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-client-leaving", map[string]string{"room": string(leavingRoom)})
 			}
 			s.removeClient(client)
 
@@ -142,29 +150,24 @@ func (s *WSServer) run() {
 			payload, _ := json.Marshal(map[string]any{"type": msg.msgType, "data": msg.data})
 			count := 0
 			for client := range subs {
-				select {
-				case client.send <- payload:
+				if client.enqueue(payload) {
 					count++
-				default:
 				}
 			}
 			for client := range s.admins {
-				select {
-				case client.send <- payload:
+				if client.enqueue(payload) {
 					count++
-				default:
 				}
 			}
 			if s.state.state.Logger != nil {
-				s.state.state.Logger.DebugL(s.state.state.ServerLang, "log-ws-broadcast", map[string]string{"room": string(msg.roomID), "type": msg.msgType, "subs": fmt.Sprintf("%d", len(subs)), "sent": fmt.Sprintf("%d", count)})
+				s.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-broadcast", map[string]string{"room": string(msg.roomID), "type": msg.msgType, "subs": fmt.Sprintf("%d", len(subs)), "sent": fmt.Sprintf("%d", count)})
 			}
 			s.mu.RUnlock()
 
 		case <-s.stop:
 			s.mu.Lock()
 			for client := range s.clients {
-				close(client.send)
-				client.conn.Close()
+				client.close()
 			}
 			s.clients = make(map[*WSClient]struct{})
 			s.rooms = make(map[roomid.RoomID]map[*WSClient]struct{})
@@ -183,7 +186,7 @@ func (s *WSServer) removeClient(client *WSClient) {
 		return
 	}
 	delete(s.clients, client)
-	if client.isAdmin {
+	if client.isAdminUser() {
 		delete(s.admins, client)
 	}
 	if client.roomID != "" {
@@ -194,8 +197,83 @@ func (s *WSServer) removeClient(client *WSClient) {
 			}
 		}
 	}
-	close(client.send)
-	client.conn.Close()
+	client.close()
+}
+
+func (c *WSClient) writeMessage(messageType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.conn == nil {
+		return nil
+	}
+	return c.conn.WriteMessage(messageType, data)
+}
+
+func (c *WSClient) setAlive(v bool) {
+	c.stateMu.Lock()
+	c.isAlive = v
+	c.stateMu.Unlock()
+}
+
+// consumeAliveForHeartbeat resets alive flag and reports whether client should be kept.
+func (c *WSClient) consumeAliveForHeartbeat() bool {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.closed {
+		return false
+	}
+	if !c.isAlive {
+		return false
+	}
+	c.isAlive = false
+	return true
+}
+
+func (c *WSClient) setAdmin(v bool) {
+	c.stateMu.Lock()
+	c.isAdmin = v
+	c.stateMu.Unlock()
+}
+
+func (c *WSClient) isAdminUser() bool {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.isAdmin
+}
+
+func (c *WSClient) enqueue(data []byte) (ok bool) {
+	c.stateMu.RLock()
+	closed := c.closed
+	c.stateMu.RUnlock()
+	if closed {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	select {
+	case c.send <- data:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *WSClient) close() {
+	c.stateMu.Lock()
+	if c.closed {
+		c.stateMu.Unlock()
+		return
+	}
+	c.closed = true
+	c.stateMu.Unlock()
+
+	close(c.send)
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
 }
 
 func (s *WSServer) heartbeat() {
@@ -204,16 +282,19 @@ func (s *WSServer) heartbeat() {
 	for {
 		select {
 		case <-ticker.C:
+			var toRemove []*WSClient
 			s.mu.Lock()
 			for client := range s.clients {
-				if !client.isAlive {
-					client.conn.Close()
+				if !client.consumeAliveForHeartbeat() {
+					toRemove = append(toRemove, client)
 					continue
 				}
-				client.isAlive = false
-				_ = client.conn.WriteMessage(websocket.PingMessage, nil)
+				_ = client.writeMessage(websocket.PingMessage, nil)
 			}
 			s.mu.Unlock()
+			for _, client := range toRemove {
+				s.removeClient(client)
+			}
 		case <-s.stop:
 			return
 		}
@@ -221,13 +302,17 @@ func (s *WSServer) heartbeat() {
 }
 
 func (c *WSClient) readPump() {
+	runtime := c.server.state.state.SnapshotRuntime()
 	defer func() {
-		c.server.leave <- c
+		select {
+		case c.server.leave <- c:
+		case <-c.server.stop:
+		}
 	}()
 
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
-		c.isAlive = true
+		c.setAlive(true)
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
@@ -237,17 +322,17 @@ func (c *WSClient) readPump() {
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				if c.server.state.state.Logger != nil {
-					c.server.state.state.Logger.DebugL(c.server.state.state.ServerLang, "log-ws-unexpected-close", map[string]string{"err": fmt.Sprintf("%v", err)})
+					c.server.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-unexpected-close", map[string]string{"err": fmt.Sprintf("%v", err)})
 				}
 			}
 			break
 		}
 
 		var msg struct {
-			Type      string `json:"type"`
-			RoomID    string `json:"roomId"`
-			UserID    int32  `json:"userId"`
-			Token     string `json:"token"`
+			Type   string `json:"type"`
+			RoomID string `json:"roomId"`
+			UserID int32  `json:"userId"`
+			Token  string `json:"token"`
 		}
 		if err := json.Unmarshal(data, &msg); err != nil {
 			c.sendJSON(map[string]any{"type": "error", "message": "invalid-message"})
@@ -256,12 +341,12 @@ func (c *WSClient) readPump() {
 
 		switch msg.Type {
 		case "ping":
-			c.isAlive = true
+			c.setAlive(true)
 			c.sendJSON(map[string]any{"type": "pong"})
 
 		case "subscribe":
 			if c.server.state.state.Logger != nil {
-				c.server.state.state.Logger.DebugL(c.server.state.state.ServerLang, "log-ws-subscribe", map[string]string{"room": msg.RoomID, "user": fmt.Sprintf("%d", msg.UserID)})
+				c.server.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-subscribe", map[string]string{"room": msg.RoomID, "user": fmt.Sprintf("%d", msg.UserID)})
 			}
 			rid, err := roomid.Parse(msg.RoomID)
 			if err != nil {
@@ -307,15 +392,16 @@ func (c *WSClient) readPump() {
 
 		case "admin_subscribe":
 			if c.server.state.state.Logger != nil {
-				c.server.state.state.Logger.DebugL(c.server.state.state.ServerLang, "log-ws-admin-subscribe", nil)
+				c.server.state.state.Logger.DebugL(runtime.ServerLang, "log-ws-admin-subscribe", nil)
 			}
 			token := msg.Token
-			expected := c.server.state.state.Config.AdminToken
+			runtime := c.server.state.state.SnapshotRuntime()
+			expected := runtime.Config.AdminToken
 			if expected == "" || token != expected {
 				c.sendJSON(map[string]any{"type": "error", "message": "unauthorized"})
 				continue
 			}
-			c.isAdmin = true
+			c.setAdmin(true)
 			c.server.mu.Lock()
 			c.server.admins[c] = struct{}{}
 			c.server.mu.Unlock()
@@ -335,18 +421,15 @@ func (c *WSClient) writePump() {
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			_ = c.conn.WriteMessage(websocket.TextMessage, msg)
+			_ = c.writeMessage(websocket.TextMessage, msg)
 
 		case <-ticker.C:
-			_ = c.conn.WriteMessage(websocket.PingMessage, nil)
+			_ = c.writeMessage(websocket.PingMessage, nil)
 		}
 	}
 }
 
 func (c *WSClient) sendJSON(v any) {
 	data, _ := json.Marshal(v)
-	select {
-	case c.send <- data:
-	default:
-	}
+	_ = c.enqueue(data)
 }

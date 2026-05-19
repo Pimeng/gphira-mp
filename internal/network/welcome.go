@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	roomListCacheTTLMs      = 2000
-	roomListMaxCachedLangs  = 10
-	hitokotoFetchTimeoutMs  = 3000
-	hitokotoCacheTTLMs      = 60000
-	hitokotoMinIntervalMs   = 600
-	welcomeClearLines       = 30
-	welcomeSeparatorLen     = 73
+	roomListCacheTTLMs     = 2000
+	roomListMaxCachedLangs = 10
+	hitokotoFetchTimeoutMs = 3000
+	hitokotoCacheTTLMs     = 60000
+	hitokotoMinIntervalMs  = 600
+	welcomeClearLines      = 30
+	welcomeSeparatorLen    = 73
 )
 
 // HitokotoValue represents a cached hitokoto (quote).
@@ -240,15 +240,16 @@ func getHitokotoCached(proxy, url string) *HitokotoValue {
 // It runs asynchronously to avoid blocking the authentication flow.
 func SendWelcomeExtras(user *game.User, st *state.ServerState, sendSystemChat func(string)) {
 	go func() {
+		runtime := st.SnapshotRuntime()
 		defer func() {
 			if r := recover(); r != nil {
-				st.Logger.WarnL(st.ServerLang, "log-welcome-panic", map[string]string{"error": fmt.Sprintf("%v", r)})
+				st.Logger.WarnL(runtime.ServerLang, "log-welcome-panic", map[string]string{"error": fmt.Sprintf("%v", r)})
 			}
 		}()
 
-		lang := user.Lang
-		tip := st.Config.RoomListTip
-		hitokoto := getHitokotoCached(st.Config.OutboundProxy, st.Config.HitokotoAPIURL)
+		lang := user.GetLang()
+		tip := runtime.Config.RoomListTip
+		hitokoto := getHitokotoCached(runtime.Config.OutboundProxy, runtime.Config.HitokotoAPIURL)
 
 		// 30 newlines to clear screen
 		var sb strings.Builder
@@ -257,8 +258,8 @@ func SendWelcomeExtras(user *game.User, st *state.ServerState, sendSystemChat fu
 		}
 
 		sb.WriteString(lang.Format("chat-welcome", map[string]string{
-			"userName":   user.Name,
-			"serverName": st.ServerName,
+			"userName":   user.GetName(),
+			"serverName": runtime.ServerName,
 		}))
 		sb.WriteByte('\n')
 		sb.WriteString(strings.Repeat("=", welcomeSeparatorLen))

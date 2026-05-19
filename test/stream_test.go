@@ -1,6 +1,8 @@
 package test
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,5 +122,69 @@ func TestStreamSend(t *testing.T) {
 
 	if conn.writeBuf.Len() == 0 {
 		t.Error("expected data to be written")
+	}
+}
+
+func TestStreamHandlerConcurrencyBounded(t *testing.T) {
+	const packets = 200
+
+	w := protocol.NewBinaryWriter()
+	protocol.EncodeClientCommand(w, protocol.ClientCommand{Type: protocol.ClientCmdPing})
+	body := w.Bytes()
+	frame := append(protocol.EncodeLengthPrefixU32(uint32(len(body))), body...)
+
+	data := []byte{0x01}
+	for i := 0; i < packets; i++ {
+		data = append(data, frame...)
+	}
+
+	conn := newMockConn(data)
+
+	codec := stream.Codec[protocol.ServerCommand, protocol.ClientCommand]{
+		EncodeSend: func(cmd protocol.ServerCommand) []byte {
+			return []byte{byte(cmd.Type)}
+		},
+		DecodeRecv:     func(data []byte) (protocol.ClientCommand, error) { return protocol.ClientCommand{}, nil },
+		IsHighPriority: func(cmd protocol.ServerCommand) bool { return false },
+	}
+
+	var inFlight int32
+	var maxInFlight int32
+	var done sync.WaitGroup
+	done.Add(packets)
+
+	strm, err := stream.New(conn, codec, func(cmd protocol.ClientCommand) error {
+		current := atomic.AddInt32(&inFlight, 1)
+		for {
+			seen := atomic.LoadInt32(&maxInFlight)
+			if current <= seen || atomic.CompareAndSwapInt32(&maxInFlight, seen, current) {
+				break
+			}
+		}
+
+		time.Sleep(15 * time.Millisecond)
+		atomic.AddInt32(&inFlight, -1)
+		done.Done()
+		return nil
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("new stream failed: %v", err)
+	}
+	defer strm.Close()
+
+	waitCh := make(chan struct{})
+	go func() {
+		done.Wait()
+		close(waitCh)
+	}()
+
+	select {
+	case <-waitCh:
+	case <-time.After(8 * time.Second):
+		t.Fatal("timeout waiting handlers to finish")
+	}
+
+	if atomic.LoadInt32(&maxInFlight) > 64 {
+		t.Fatalf("max handler concurrency = %d, want <= 64", maxInFlight)
 	}
 }

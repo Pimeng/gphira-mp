@@ -11,7 +11,7 @@ import (
 
 // chartCacheEntry holds a cached chart with metadata.
 type chartCacheEntry struct {
-	ID             int32 `json:"id"`
+	ID             int32  `json:"id"`
 	Name           string `json:"name"`
 	CachedAt       int64  `json:"cached_at"`
 	LastAccessedAt int64  `json:"last_accessed_at"`
@@ -20,13 +20,15 @@ type chartCacheEntry struct {
 // ChartCache is an LRU cache for Phira chart metadata.
 // It persists to disk so cache survives server restarts.
 type ChartCache struct {
-	mu          sync.RWMutex
-	entries     map[int32]*chartCacheEntry
-	maxSize     int
-	ttl         time.Duration
-	persistPath string
-	initialized bool
-	stats       struct {
+	mu           sync.RWMutex
+	entries      map[int32]*chartCacheEntry
+	maxSize      int
+	ttl          time.Duration
+	persistPath  string
+	initialized  bool
+	saveInFlight bool
+	savePending  bool
+	stats        struct {
 		hits   int
 		misses int
 	}
@@ -45,7 +47,10 @@ func NewChartCache(maxSize int, ttl time.Duration) *ChartCache {
 }
 
 // Get retrieves a chart from cache. Returns nil if not found or expired.
-func (c *ChartCache) Get(id int32) *struct{ ID int32; Name string } {
+func (c *ChartCache) Get(id int32) *struct {
+	ID   int32
+	Name string
+} {
 	// Try Redis first
 	if rdb := GetRedisClient(); rdb != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -60,7 +65,10 @@ func (c *ChartCache) Get(id int32) *struct{ ID int32; Name string } {
 					c.entries[id] = &entry
 					c.stats.hits++
 					c.mu.Unlock()
-					return &struct{ ID int32; Name string }{ID: entry.ID, Name: entry.Name}
+					return &struct {
+						ID   int32
+						Name string
+					}{ID: entry.ID, Name: entry.Name}
 				}
 			}
 		}
@@ -85,7 +93,10 @@ func (c *ChartCache) Get(id int32) *struct{ ID int32; Name string } {
 
 	entry.LastAccessedAt = time.Now().UnixMilli()
 	c.stats.hits++
-	return &struct{ ID int32; Name string }{ID: entry.ID, Name: entry.Name}
+	return &struct {
+		ID   int32
+		Name string
+	}{ID: entry.ID, Name: entry.Name}
 }
 
 // Set stores a chart in the cache.
@@ -214,27 +225,62 @@ func (c *ChartCache) ensureInitializedLocked() {
 }
 
 func (c *ChartCache) scheduleSaveLocked() {
-	go c.saveToDisk()
+	if c.saveInFlight {
+		c.savePending = true
+		return
+	}
+	c.saveInFlight = true
+	go c.saveToDiskWorker()
 }
 
-func (c *ChartCache) saveToDisk() {
+func (c *ChartCache) saveToDiskWorker() {
+	for {
+		if !c.saveToDisk() {
+			c.mu.Lock()
+			if c.savePending {
+				c.savePending = false
+				c.mu.Unlock()
+				continue
+			}
+			c.saveInFlight = false
+			c.mu.Unlock()
+			return
+		}
+
+		c.mu.Lock()
+		if c.savePending {
+			c.savePending = false
+			c.mu.Unlock()
+			continue
+		}
+		c.saveInFlight = false
+		c.mu.Unlock()
+		return
+	}
+}
+
+func (c *ChartCache) saveToDisk() bool {
 	c.mu.RLock()
 	obj := make(map[string]*chartCacheEntry, len(c.entries))
 	for k, v := range c.entries {
 		obj[intToStr(int(k))] = v
 	}
+	path := c.persistPath
 	c.mu.RUnlock()
 
-	if err := os.MkdirAll(filepath.Dir(c.persistPath), 0755); err != nil {
-		return
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false
 	}
 
 	data, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
-		return
+		return false
 	}
 
-	_ = os.WriteFile(c.persistPath, data, 0644)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return false
+	}
+	return true
 }
 
 func intToStr(v int) string {

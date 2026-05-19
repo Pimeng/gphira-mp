@@ -20,7 +20,8 @@ func (h *HTTPServer) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc
 			// Also check query parameter for websocket compatibility
 			token = r.URL.Query().Get("token")
 		}
-		expected := h.state.Config.AdminToken
+		runtime := h.state.SnapshotRuntime()
+		expected := runtime.Config.AdminToken
 		if expected == "" || token != expected {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
 				"ok":    false,
@@ -67,12 +68,12 @@ func (h *HTTPServer) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
-		"server_name": h.state.ServerName,
-		"online":     onlineCount,
-		"rooms":      roomCount,
-		"sessions":   sessionCount,
-		"room_ids":   rooms,
+		"ok":          true,
+		"server_name": h.state.SnapshotRuntime().ServerName,
+		"online":      onlineCount,
+		"rooms":       roomCount,
+		"sessions":    sessionCount,
+		"room_ids":    rooms,
 	})
 }
 
@@ -202,13 +203,13 @@ func (h *HTTPServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		for _, u := range h.state.Users {
 			info := userInfo{
 				ID:      u.ID,
-				Name:    u.Name,
-				Monitor: u.Monitor,
+				Name:    u.GetName(),
+				Monitor: u.IsMonitor(),
 			}
-			if u.Room != nil {
-				info.RoomID = string(u.Room.ID)
+			if u.GetRoom() != nil {
+				info.RoomID = string(u.GetRoom().ID)
 			}
-			if sess, ok := u.Session.(*Session); ok {
+			if sess, ok := u.GetSession().(*Session); ok {
 				info.RemoteIP = sess.RemoteIP
 			}
 			users = append(users, info)
@@ -244,7 +245,7 @@ func (h *HTTPServer) handleAdminSessions(w http.ResponseWriter, r *http.Request)
 				}
 				if s.user != nil {
 					info.UserID = s.user.ID
-					info.UserName = s.user.Name
+					info.UserName = s.user.GetName()
 				}
 				sessions = append(sessions, info)
 			}
@@ -252,8 +253,8 @@ func (h *HTTPServer) handleAdminSessions(w http.ResponseWriter, r *http.Request)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"sessions":  sessions,
+		"ok":       true,
+		"sessions": sessions,
 	})
 }
 
@@ -313,7 +314,7 @@ func (h *HTTPServer) handleAdminContestConfig(w http.ResponseWriter, r *http.Req
 			return
 		}
 		if !req.Enabled {
-			room.Contest = nil
+			room.ClearContest()
 			ok = true
 			return
 		}
@@ -330,11 +331,11 @@ func (h *HTTPServer) handleAdminContestConfig(w http.ResponseWriter, r *http.Req
 				whitelist[id] = struct{}{}
 			}
 		}
-		room.Contest = &game.ContestConfig{
+		room.SetContest(&game.ContestConfig{
 			Whitelist:   whitelist,
 			ManualStart: true,
 			AutoDisband: true,
-		}
+		})
 		ok = true
 	})
 
@@ -370,7 +371,7 @@ func (h *HTTPServer) handleAdminContestWhitelist(w http.ResponseWriter, r *http.
 		for _, id := range room.MonitorIDs() {
 			whitelist[id] = struct{}{}
 		}
-		room.Contest.Whitelist = whitelist
+		_ = room.SetContestWhitelist(whitelist)
 		ok = true
 	})
 
@@ -436,18 +437,19 @@ func (h *HTTPServer) handleAdminContestStart(w http.ResponseWriter, r *http.Requ
 	users := room.UserIDs()
 	monitors := room.MonitorIDs()
 
-	if h.state.Logger != nil && h.state.ServerLang != nil {
+	runtime := h.state.SnapshotRuntime()
+	if h.state.Logger != nil && runtime.ServerLang != nil {
 		sep := ", "
-		if h.state.ServerLang.Format("lang-check", nil) == "zh" {
+		if runtime.ServerLang.Format("lang-check", nil) == "zh" {
 			sep = "、"
 		}
 		usersText := joinInt32s(users, sep)
 		var monitorsSuffix string
 		if len(monitors) > 0 {
 			monitorsText := joinInt32s(monitors, sep)
-			monitorsSuffix = h.state.ServerLang.Format("log-room-game-start-monitors", map[string]string{"monitors": monitorsText})
+			monitorsSuffix = runtime.ServerLang.Format("log-room-game-start-monitors", map[string]string{"monitors": monitorsText})
 		}
-		h.state.Logger.Info(h.state.ServerLang.Format("log-room-game-start", map[string]string{"users": usersText, "monitorsSuffix": monitorsSuffix}))
+		h.state.Logger.Info(runtime.ServerLang.Format("log-room-game-start", map[string]string{"users": usersText, "monitorsSuffix": monitorsSuffix}))
 	}
 
 	_ = h.broadcastRoomAll(rid, protocol.ServerCommand{
@@ -458,14 +460,14 @@ func (h *HTTPServer) handleAdminContestStart(w http.ResponseWriter, r *http.Requ
 	h.state.WithLock(func() {
 		for _, uid := range users {
 			if u := h.state.Users[uid]; u != nil {
-				u.GameTime = -1e9
+				u.ResetGameTime()
 			}
 		}
-		room.State = &game.StatePlaying{
-			Results: make(map[int32]*game.RecordData),
-			Aborted: make(map[int32]struct{}),
-		}
 	})
+	if err := room.ForceStartPlaying(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 
 	_ = h.broadcastRoomAll(rid, protocol.ServerCommand{
 		Type:  protocol.ServerCmdChangeState,
@@ -505,7 +507,6 @@ func joinInt32s(ids []int32, sep string) string {
 	}
 	return strings.Join(parts, sep)
 }
-
 
 // ========== Admin Logs ==========
 
@@ -571,7 +572,7 @@ func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) 
 		var sess *Session
 		h.state.WithRLock(func() {
 			if u := h.state.Users[req.UserID]; u != nil {
-				if s, ok := u.Session.(*Session); ok {
+				if s, ok := u.GetSession().(*Session); ok {
 					sess = s
 				}
 			}
@@ -713,16 +714,16 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 			if u == nil {
 				return
 			}
-			connected := u.Session != nil
+			connected := u.HasSession()
 			roomID := ""
-			if u.Room != nil {
-				roomID = string(u.Room.ID)
+			if u.GetRoom() != nil {
+				roomID = string(u.GetRoom().ID)
 			}
 			_, banned := h.state.BannedUsers[userID]
 			out = map[string]any{
 				"id":        u.ID,
-				"name":      u.Name,
-				"monitor":   u.Monitor,
+				"name":      u.GetName(),
+				"monitor":   u.IsMonitor(),
 				"connected": connected,
 				"room":      roomID,
 				"banned":    banned,
@@ -741,7 +742,7 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 		var sess *Session
 		h.state.WithRLock(func() {
 			if u := h.state.Users[userID]; u != nil {
-				if s, ok := u.Session.(*Session); ok {
+				if s, ok := u.GetSession().(*Session); ok {
 					sess = s
 				}
 			}
@@ -785,6 +786,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
 			return
 		}
+		runtime := h.state.SnapshotRuntime()
 
 		// Disconnect all participants
 		allIDs := room.AllParticipantIDs()
@@ -792,7 +794,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			var sess *Session
 			h.state.WithRLock(func() {
 				if u := h.state.Users[uid]; u != nil {
-					if s, ok := u.Session.(*Session); ok {
+					if s, ok := u.GetSession().(*Session); ok {
 						sess = s
 					}
 				}
@@ -806,7 +808,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			delete(h.state.Rooms, rid)
 		})
 
-		if h.state.ReplayEnabled && h.state.ReplayRecorder != nil && room.ReplayEligible {
+		if runtime.ReplayEnabled && h.state.ReplayRecorder != nil && room.ReplayEligible {
 			h.state.ReplayRecorder.EndRoom(rid)
 		}
 

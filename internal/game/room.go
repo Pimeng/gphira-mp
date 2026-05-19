@@ -254,13 +254,173 @@ func (r *Room) ValidateJoin(userID int32, monitor bool, monitors []int, state In
 	return nil
 }
 
-func (r *Room) HandleJoin(userID int32, state InternalRoomState) {
+func (r *Room) OnUserJoin(userID int32, monitor bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if s, ok := r.State.(*StatePlaying); ok {
-		s.Aborted[userID] = struct{}{}
+		if !monitor {
+			s.Aborted[userID] = struct{}{}
+		}
 	}
-	_ = state
+	if s, ok := r.State.(*StateWaitForReady); ok {
+		s.Started[userID] = struct{}{}
+	}
+}
+
+func (r *Room) SetLocked(locked bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Locked = locked
+}
+
+func (r *Room) SetCycle(cycle bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Cycle = cycle
+}
+
+func (r *Room) SetChart(chart *Chart) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Chart = chart
+}
+
+func (r *Room) StartWaitForReady(hostID int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.State.(*StateSelectChart); !ok {
+		return errors.New("room-invalid-state")
+	}
+	if r.Chart == nil {
+		return errors.New("start-no-chart-selected")
+	}
+	r.State = &StateWaitForReady{Started: map[int32]struct{}{hostID: {}}}
+	return nil
+}
+
+func (r *Room) ResetToSelectChart() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.State = &StateSelectChart{}
+}
+
+func (r *Room) SetReady(userID int32) (already bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.State.(*StatePlaying); ok {
+		return false, errors.New("room-invalid-state")
+	}
+	s, ok := r.State.(*StateWaitForReady)
+	if !ok {
+		return false, nil
+	}
+	if _, exists := s.Started[userID]; exists {
+		return true, nil
+	}
+	s.Started[userID] = struct{}{}
+	return false, nil
+}
+
+func (r *Room) CancelReady(userID int32) (wasHost bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.State.(*StatePlaying); ok {
+		return false, errors.New("room-invalid-state")
+	}
+	s, ok := r.State.(*StateWaitForReady)
+	if !ok {
+		return false, nil
+	}
+	if _, exists := s.Started[userID]; !exists {
+		return false, errors.New("room-not-ready")
+	}
+	delete(s.Started, userID)
+	return r.HostID == userID, nil
+}
+
+func (r *Room) AddResult(userID int32, record *RecordData) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.State.(*StatePlaying)
+	if !ok {
+		return errors.New("room-invalid-state")
+	}
+	if _, aborted := s.Aborted[userID]; aborted {
+		return errors.New("room-game-aborted")
+	}
+	if _, results := s.Results[userID]; results {
+		return errors.New("record-already-uploaded")
+	}
+	s.Results[userID] = record
+	return nil
+}
+
+func (r *Room) SetContest(contest *ContestConfig) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Contest = contest
+}
+
+func (r *Room) ClearContest() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Contest = nil
+}
+
+func (r *Room) SetContestWhitelist(whitelist map[int32]struct{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Contest == nil {
+		return errors.New("contest-not-enabled")
+	}
+	r.Contest.Whitelist = whitelist
+	return nil
+}
+
+func (r *Room) ForceStartPlaying() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.State.(*StateWaitForReady); !ok {
+		return errors.New("room-not-waiting")
+	}
+	r.State = &StatePlaying{
+		Results: make(map[int32]*RecordData),
+		Aborted: make(map[int32]struct{}),
+	}
+	return nil
+}
+
+func (r *Room) CanAcceptTouches(userID int32) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	s, ok := r.State.(*StatePlaying)
+	if !ok {
+		return false
+	}
+	if _, aborted := s.Aborted[userID]; aborted {
+		return false
+	}
+	if _, results := s.Results[userID]; results {
+		return false
+	}
+	return true
+}
+
+func (r *Room) SetAborted(userID int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.State.(*StatePlaying)
+	if !ok {
+		return errors.New("room-invalid-state")
+	}
+	if _, results := s.Results[userID]; results {
+		return errors.New("record-already-uploaded")
+	}
+	if _, aborted := s.Aborted[userID]; aborted {
+		return errors.New("room-game-aborted")
+	}
+	s.Aborted[userID] = struct{}{}
+	return nil
 }
 
 func (r *Room) ValidateStart(userID int32) error {
@@ -293,7 +453,7 @@ func (r *Room) ValidateSelectChart(userID int32) error {
 func (r *Room) resetGameTimeLocked(usersById func(int32) *User) {
 	for id := range r.users {
 		if u := usersById(id); u != nil {
-			u.GameTime = -1e9
+			u.ResetGameTime()
 		}
 	}
 }
@@ -393,15 +553,15 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 
 			bestScoreName := fmt.Sprintf("%d", bestScoreID)
 			if u := callbacks.UsersById(bestScoreID); u != nil {
-				bestScoreName = u.Name
+				bestScoreName = u.GetName()
 			}
 			bestAccName := fmt.Sprintf("%d", bestAccID)
 			if u := callbacks.UsersById(bestAccID); u != nil {
-				bestAccName = u.Name
+				bestAccName = u.GetName()
 			}
 			bestStdName := fmt.Sprintf("%d", bestStdID)
 			if u := callbacks.UsersById(bestStdID); u != nil {
-				bestStdName = u.Name
+				bestStdName = u.GetName()
 			}
 
 			scoreText := callbacks.Lang.Format("chat-game-summary-score", map[string]string{
@@ -488,7 +648,7 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 			for id, rec := range s.Results {
 				name := fmt.Sprintf("%d", id)
 				if u := callbacks.UsersById(id); u != nil {
-					name = u.Name
+					name = u.GetName()
 				}
 				rows = append(rows, contestRow{
 					ID:       id,
@@ -594,13 +754,14 @@ func (r *Room) OnUserLeave(user *User, callbacks *RoomCallbacks) bool {
 	if callbacks.Broadcast != nil {
 		_ = callbacks.Broadcast(protocol.ServerCommand{
 			Type:    protocol.ServerCmdMessage,
-			Message: protocol.Message{Type: protocol.MessageLeaveRoom, User: user.ID, Name: user.Name},
+			Message: protocol.Message{Type: protocol.MessageLeaveRoom, User: user.ID, Name: user.GetName()},
 		})
 	}
 
-	user.Room = nil
+	wasMonitor := user.IsMonitor()
+	user.ClearRoom()
 
-	if user.Monitor {
+	if wasMonitor {
 		delete(r.monitors, user.ID)
 	} else {
 		delete(r.users, user.ID)

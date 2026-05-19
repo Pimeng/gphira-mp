@@ -2,6 +2,9 @@ package network
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,10 +15,10 @@ const monitorFlushIntervalMs = 50
 
 // MonitorBuffer aggregates touches/judges for monitors.
 type MonitorBuffer struct {
-	mu           sync.Mutex
-	touchBuffer  []touchEntry
-	judgeBuffer  []judgeEntry
-	timer        *time.Timer
+	mu            sync.Mutex
+	touchBuffer   []touchEntry
+	judgeBuffer   []judgeEntry
+	timer         *time.Timer
 	broadcastFast func(player int32, frames []protocol.TouchFrame, judges []protocol.JudgeEvent, ids []int32)
 }
 
@@ -125,11 +128,20 @@ func (b *MonitorBuffer) scheduleFlush() {
 }
 
 func monitorKey(player int32, ids []int32) string {
-	// Simple key: player:len:hash of ids
-	// For correctness, we sort ids and concatenate
-	// Simplified: just use player and first/last id
 	if len(ids) == 0 {
 		return fmt.Sprintf("%d:", player)
 	}
-	return fmt.Sprintf("%d:%d-%d", player, ids[0], ids[len(ids)-1])
+	copied := append([]int32(nil), ids...)
+	sort.Slice(copied, func(i, j int) bool { return copied[i] < copied[j] })
+
+	var b strings.Builder
+	b.WriteString(strconv.FormatInt(int64(player), 10))
+	b.WriteByte(':')
+	for i, id := range copied {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.FormatInt(int64(id), 10))
+	}
+	return b.String()
 }

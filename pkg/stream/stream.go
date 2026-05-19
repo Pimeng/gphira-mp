@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	sendTimeoutMs      = 5000
-	batchSendDelayMs   = 5
-	maxBatchSize       = 20
-	protocolVersion    = 1
+	sendTimeoutMs     = 5000
+	batchSendDelayMs  = 5
+	maxBatchSize      = 20
+	protocolVersion   = 1
+	maxHandlerWorkers = 64
 )
 
 // Codec defines encode/decode and priority for a stream.
@@ -25,21 +26,23 @@ type Codec[S, R any] struct {
 
 // Stream manages a single TCP connection with framing, batching, and fast path.
 type Stream[S, R any] struct {
-	conn       net.Conn
-	version    byte
-	codec      Codec[S, R]
-	handler    func(R) error
-	fastPath   func(R) bool
-	onError    func(phase string, err error)
+	conn     net.Conn
+	version  byte
+	codec    Codec[S, R]
+	handler  func(R) error
+	fastPath func(R) bool
+	onError  func(phase string, err error)
 
-	recvBuf    []byte
-	closed     bool
-	closeMu    sync.Mutex
+	recvBuf []byte
+	closed  bool
+	closeMu sync.Mutex
 
-	sendBatch  [][]byte
-	sendTimer  *time.Timer
-	sendMu     sync.Mutex
-	sending    bool
+	sendBatch [][]byte
+	sendTimer *time.Timer
+	sendMu    sync.Mutex
+	sending   bool
+
+	handlerSem chan struct{}
 }
 
 // New creates a new stream after version negotiation (server-side).
@@ -59,12 +62,13 @@ func New[S, R any](conn net.Conn, codec Codec[S, R], handler func(R) error, fast
 	}
 
 	s := &Stream[S, R]{
-		conn:     conn,
-		version:  protocolVersion,
-		codec:    codec,
-		handler:  handler,
-		fastPath: fastPath,
-		onError:  onError,
+		conn:       conn,
+		version:    protocolVersion,
+		codec:      codec,
+		handler:    handler,
+		fastPath:   fastPath,
+		onError:    onError,
+		handlerSem: make(chan struct{}, maxHandlerWorkers),
 	}
 	go s.readLoop()
 	return s, nil
@@ -82,12 +86,13 @@ func NewClient[S, R any](conn net.Conn, codec Codec[S, R], handler func(R) error
 	}
 
 	s := &Stream[S, R]{
-		conn:     conn,
-		version:  protocolVersion,
-		codec:    codec,
-		handler:  handler,
-		fastPath: fastPath,
-		onError:  onError,
+		conn:       conn,
+		version:    protocolVersion,
+		codec:      codec,
+		handler:    handler,
+		fastPath:   fastPath,
+		onError:    onError,
+		handlerSem: make(chan struct{}, maxHandlerWorkers),
 	}
 	go s.readLoop()
 	return s, nil
@@ -128,7 +133,14 @@ func (s *Stream[S, R]) readLoop() {
 				return
 			}
 
+			if s.handler == nil {
+				continue
+			}
+
+			s.handlerSem <- struct{}{}
+
 			go func(p R) {
+				defer func() { <-s.handlerSem }()
 				if err := s.handler(p); err != nil {
 					if s.onError != nil {
 						s.onError("handler", err)
