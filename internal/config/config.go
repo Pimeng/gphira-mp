@@ -116,6 +116,50 @@ func ParseBool(value string) (bool, bool) {
 	return false, false
 }
 
+// KeepStartupOnlyFields preserves startup-only fields from prev in next.
+// Returns the list of field names that were changed (requiring restart to take effect).
+func KeepStartupOnlyFields(prev, next *ServerConfig) []string {
+	var changed []string
+	if next.Host != prev.Host {
+		changed = append(changed, "HOST")
+		next.Host = prev.Host
+	}
+	if next.Port != prev.Port {
+		changed = append(changed, "PORT")
+		next.Port = prev.Port
+	}
+	if DerefBool(next.HTTPService, false) != DerefBool(prev.HTTPService, false) {
+		changed = append(changed, "HTTP_SERVICE")
+		next.HTTPService = prev.HTTPService
+	}
+	if next.HTTPPort != prev.HTTPPort {
+		changed = append(changed, "HTTP_PORT")
+		next.HTTPPort = prev.HTTPPort
+	}
+	if next.AdminDataPath != prev.AdminDataPath {
+		changed = append(changed, "ADMIN_DATA_PATH")
+		next.AdminDataPath = prev.AdminDataPath
+	}
+	if prev.Redis != nil && next.Redis != nil {
+		if next.Redis.Host != prev.Redis.Host || next.Redis.Port != prev.Redis.Port ||
+			next.Redis.Password != prev.Redis.Password || next.Redis.DB != prev.Redis.DB ||
+			next.Redis.Enabled != prev.Redis.Enabled {
+			changed = append(changed, "REDIS")
+			r := *prev.Redis
+			next.Redis = &r
+		}
+	} else if (prev.Redis == nil) != (next.Redis == nil) {
+		changed = append(changed, "REDIS")
+		if prev.Redis != nil {
+			r := *prev.Redis
+			next.Redis = &r
+		} else {
+			next.Redis = nil
+		}
+	}
+	return changed
+}
+
 // ParseString parses a non-empty string value.
 func ParseString(value string) (string, bool) {
 	v := strings.TrimSpace(value)

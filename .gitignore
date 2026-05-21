@@ -47,5 +47,8 @@ Thumbs.db
 # Keep example config
 !server_config.example.yml
 
+# AI
+.claude/
+
 # tphira-mp
 tphira-mp-main/

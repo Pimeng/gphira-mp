@@ -48,24 +48,57 @@ func msUntilNextMidnight() time.Duration {
 }
 
 // cleanupExpiredReplays walks baseDir and deletes .phirarec files older than ttlDays.
+// After removing files, it cleans up empty chart and user directories.
 func cleanupExpiredReplays(baseDir string, now time.Time, ttlDays int) error {
 	if baseDir == "" {
 		return nil
 	}
 	cutoff := now.AddDate(0, 0, -ttlDays)
-	return filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // ignore permission errors
-		}
-		if info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(path, ".phirarec") {
-			return nil
-		}
-		if info.ModTime().Before(cutoff) {
-			_ = os.Remove(path)
-		}
+
+	userDirs, err := os.ReadDir(baseDir)
+	if err != nil {
 		return nil
-	})
+	}
+
+	for _, userEntry := range userDirs {
+		if !userEntry.IsDir() {
+			continue
+		}
+		userDir := filepath.Join(baseDir, userEntry.Name())
+		chartDirs, err := os.ReadDir(userDir)
+		if err != nil {
+			continue
+		}
+
+		for _, chartEntry := range chartDirs {
+			if !chartEntry.IsDir() {
+				continue
+			}
+			chartDir := filepath.Join(userDir, chartEntry.Name())
+			files, err := os.ReadDir(chartDir)
+			if err != nil {
+				continue
+			}
+
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".phirarec") {
+					continue
+				}
+				info, err := f.Info()
+				if err != nil {
+					continue
+				}
+				if info.ModTime().Before(cutoff) {
+					_ = os.Remove(filepath.Join(chartDir, f.Name()))
+				}
+			}
+
+			removeIfEmpty(chartDir)
+		}
+
+		removeIfEmpty(userDir)
+	}
+
+	return nil
 }
+

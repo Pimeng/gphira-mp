@@ -656,15 +656,20 @@ func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) 
 	_ = h.state.SaveAdminData()
 
 	if req.Disconnect && req.Banned {
+		var user *game.User
 		var sess *Session
 		h.state.WithRLock(func() {
 			if u := h.state.Users[req.UserID]; u != nil {
+				user = u
 				if s, ok := u.GetSession().(*Session); ok {
 					sess = s
 				}
 			}
 		})
 		if sess != nil {
+			if user != nil && user.GetRoom() != nil {
+				h.abortPlayingUserAndCheckReady(user, user.GetRoom())
+			}
 			sess.adminDisconnect(true)
 		}
 	}
@@ -826,9 +831,11 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 
 	// POST /admin/users/:id/disconnect
 	if r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "disconnect" {
+		var user *game.User
 		var sess *Session
 		h.state.WithRLock(func() {
 			if u := h.state.Users[userID]; u != nil {
+				user = u
 				if s, ok := u.GetSession().(*Session); ok {
 					sess = s
 				}
@@ -837,6 +844,9 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 		if sess == nil {
 			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "user-not-connected"})
 			return
+		}
+		if user != nil && user.GetRoom() != nil {
+			h.abortPlayingUserAndCheckReady(user, user.GetRoom())
 		}
 		sess.adminDisconnect(false)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -1087,4 +1097,101 @@ func (h *HTTPServer) findUser(id int32) *game.User {
 		u = h.state.Users[id]
 	})
 	return u
+}
+
+func (h *HTTPServer) abortPlayingUserAndCheckReady(user *game.User, room *game.Room) {
+	if room == nil {
+		return
+	}
+	err := room.SetAborted(user.ID)
+	if err != nil {
+		return
+	}
+	_ = h.broadcastRoomAll(room.ID, protocol.ServerCommand{
+		Type:    protocol.ServerCmdMessage,
+		Message: protocol.Message{Type: protocol.MessageAbort, User: user.ID},
+	})
+	h.checkRoomAllReady(room)
+}
+
+func (h *HTTPServer) checkRoomAllReady(room *game.Room) {
+	runtime := h.state.SnapshotRuntime()
+	participantIDs := room.AllParticipantIDs()
+	userIDs := room.UserIDs()
+	monitorIDs := room.MonitorIDs()
+	_ = room.CheckAllReady(&game.RoomCallbacks{
+		UsersById: h.findUser,
+		Broadcast: func(cmd protocol.ServerCommand) error {
+			for _, id := range participantIDs {
+				if u := h.findUser(id); u != nil {
+					_ = u.TrySend(cmd)
+				}
+			}
+			return nil
+		},
+		BroadcastToMonitors: func(cmd protocol.ServerCommand) {
+			for _, id := range monitorIDs {
+				if u := h.findUser(id); u != nil {
+					_ = u.TrySend(cmd)
+				}
+			}
+		},
+		PickRandomUserId: utils.RandomPickInt32,
+		Lang:             runtime.ServerLang,
+		Logger:           h.state.Logger,
+		OnEnterPlaying: func(r *game.Room) {
+			if runtime.ReplayEnabled && h.state.ReplayRecorder != nil && r.ReplayEligible {
+				var participants []replay.Participant
+				for _, uid := range userIDs {
+					name := ""
+					if u := h.findUser(uid); u != nil {
+						name = u.GetName()
+					}
+					participants = append(participants, replay.Participant{ID: uid, Name: name})
+				}
+				chartID := 0
+				chartName := ""
+				if r.Chart != nil {
+					chartID = r.Chart.ID
+					chartName = r.Chart.Name
+				}
+				h.state.ReplayRecorder.StartRoom(r.ID, chartID, chartName, participants)
+			}
+		},
+		OnGameEnd: func(r *game.Room) {
+			if runtime.ReplayEnabled && h.state.ReplayRecorder != nil && r.ReplayEligible {
+				h.state.ReplayRecorder.EndRoom(r.ID)
+			}
+			if h.state.AutoUploadCallback != nil && r.Chart != nil {
+				if playing, ok := r.State.(*game.StatePlaying); ok {
+					chartID := int32(r.Chart.ID)
+					var roomFiles []replay.FileInfo
+					if h.state.ReplayRecorder != nil {
+						roomFiles = h.state.ReplayRecorder.ListRoomFiles(r.ID)
+					}
+					for userID, recordData := range playing.Results {
+						for _, fi := range roomFiles {
+							if fi.UserID == userID {
+								h.state.AutoUploadCallback(userID, chartID, fi.Timestamp, recordData.ID)
+								break
+							}
+						}
+					}
+				}
+			}
+			if h.state.ReplayRecorder != nil {
+				h.state.ReplayRecorder.ClearRoomFiles(r.ID)
+			}
+		},
+		DisbandRoom: func(r *game.Room) {
+			h.state.WithLock(func() {
+				delete(h.state.Rooms, r.ID)
+			})
+		},
+		NotifyWebSocket: func(rid roomid.RoomID) {
+			if h.state.WSServer != nil {
+				h.state.WSServer.BroadcastRoomUpdate(rid, nil)
+			}
+		},
+	})
 }

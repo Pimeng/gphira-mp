@@ -644,9 +644,9 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 		}
 
 		if len(s.Results) > 0 && callbacks.Lang != nil && callbacks.UsersById != nil {
-			bestScore := -1
-			bestAcc := float32(-1.0)
-			bestStd := float32(1e9)
+			bestScore := math.MinInt
+			bestAcc := float32(math.Inf(-1))
+			bestStd := float32(math.Inf(1))
 			var bestScoreID, bestAccID, bestStdID int32
 
 			for id, rec := range s.Results {
@@ -892,12 +892,8 @@ func (r *Room) OnUserLeave(user *User, callbacks *RoomCallbacks) bool {
 		var newHost int32
 		if callbacks.PickRandomUserId != nil {
 			newHost = callbacks.PickRandomUserId(users)
-		}
-		if newHost == 0 {
-			if callbacks.NotifyWebSocket != nil {
-				callbacks.NotifyWebSocket(r.ID)
-			}
-			return true
+		} else {
+			newHost = users[0]
 		}
 		r.HostID = newHost
 		if callbacks.Broadcast != nil {

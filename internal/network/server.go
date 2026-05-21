@@ -93,6 +93,10 @@ func StartServer(cfg *config.ServerConfig, logger *utils.Logger, configPath stri
 				}
 				envCfg := config.LoadEnvConfig()
 				newCfg := config.MergeConfig(config.MergeConfig(config.DefaultConfig(), loaded), envCfg)
+				restartKeys := config.KeepStartupOnlyFields(s.cfg, newCfg)
+				if len(restartKeys) > 0 {
+					logger.Warn("config reload: startup-only fields changed (restart required)", "fields", strings.Join(restartKeys, ", "))
+				}
 				s.state.ApplyConfig(newCfg)
 				logger.MarkL(s.state.SnapshotRuntime().ServerLang, "log-config-reloaded", nil)
 			})
