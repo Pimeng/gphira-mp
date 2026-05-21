@@ -350,8 +350,8 @@ func (s *Session) sendFakeMonitorJoin(targetUser *game.User, room *game.Room) {
 		Monitor: true,
 	}
 	go func() {
-		// 用户反馈：2ms 太短，客户端可能尚未完成 room 状态初始化；改为 10ms
-		// 并在客户端 room 视图中模拟一个 monitor 加入，使 Phira 客户端开始上报 touches/judges
+		// 10ms 后向房主单播一个伪造的 monitor 加入事件——Phira 客户端据此把
+		// 本地 room.live 翻为 true，从而开始上报 touches/judges。
 		time.Sleep(10 * time.Millisecond)
 		if targetUser.GetRoom() != room {
 			if s.State.Logger != nil {
@@ -366,6 +366,20 @@ func (s *Session) sendFakeMonitorJoin(targetUser *game.User, room *game.Room) {
 		})
 		if s.State.Logger != nil {
 			s.State.Logger.Debug(fmt.Sprintf("sendFakeMonitorJoin sent to user %d room %s", targetUser.ID, room.ID))
+		}
+
+		// 再 10ms 后单播一个伪造的 monitor 离开事件，清理客户端房间视图中
+		// 的占位用户。Phira 一旦确认过 live 状态就不会再因为离开而停发数据。
+		time.Sleep(10 * time.Millisecond)
+		if targetUser.GetRoom() != room {
+			return
+		}
+		_ = targetUser.TrySend(protocol.ServerCommand{
+			Type:    protocol.ServerCmdMessage,
+			Message: protocol.Message{Type: protocol.MessageLeaveRoom, User: fake.ID, Name: fake.Name},
+		})
+		if s.State.Logger != nil {
+			s.State.Logger.Debug(fmt.Sprintf("sendFakeMonitorLeave sent to user %d room %s", targetUser.ID, room.ID))
 		}
 	}()
 }
