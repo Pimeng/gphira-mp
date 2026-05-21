@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -17,7 +19,11 @@ import (
 	"github.com/Pimeng/gphira-mp-next/internal/utils"
 )
 
-const replaySessionTTL = 30 * time.Minute
+const (
+	replaySessionTTL          = 30 * time.Minute
+	replayDownloadBytesPerSec = 50 * 1024
+	replayDownloadChunkSize   = 4096
+)
 
 type replaySession struct {
 	UserID    int32
@@ -93,7 +99,7 @@ func (h *HTTPServer) handleReplayAuth(w http.ResponseWriter, r *http.Request) {
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
-	me, err := FetchPhiraUserInfo(endpoint, strings.TrimSpace(req.Token), runtime.Config.OutboundProxy)
+	me, err := VerifyUserToken(endpoint, strings.TrimSpace(req.Token), runtime.Config.OutboundProxy)
 	if err != nil || me == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 		return
@@ -240,12 +246,58 @@ func (h *HTTPServer) serveReplayFile(w http.ResponseWriter, r *http.Request, use
 	if err != nil || header == nil || header.UserID != userID || header.ChartID != chartID {
 		return false
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%d.phirarec"`, timestamp))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-	http.ServeFile(w, r, path)
+
+	streamReplayThrottled(w, r, f)
 	return true
+}
+
+// streamReplayThrottled copies the file to the response writer in fixed-size
+// chunks, sleeping between chunks so the throughput matches
+// replayDownloadBytesPerSec (50 KB/s). Mirrors the TS replayPublicRoutes.ts
+// implementation. Returns early when the client disconnects.
+func streamReplayThrottled(w http.ResponseWriter, r *http.Request, src io.Reader) {
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, replayDownloadChunkSize)
+	ctx := r.Context()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			delayMs := int(math.Ceil(float64(n) / float64(replayDownloadBytesPerSec) * 1000.0))
+			if delayMs > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(delayMs) * time.Millisecond):
+				}
+			}
+		}
+		if readErr != nil {
+			return
+		}
+	}
 }
 
 func (h *HTTPServer) handleReplayDelete(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +357,7 @@ func (h *HTTPServer) handleReplayUpload(w http.ResponseWriter, r *http.Request) 
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
-	me, err := FetchPhiraUserInfo(endpoint, strings.TrimSpace(req.Token), runtime.Config.OutboundProxy)
+	me, err := VerifyUserToken(endpoint, strings.TrimSpace(req.Token), runtime.Config.OutboundProxy)
 	if err != nil || me == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 		return
@@ -376,7 +428,7 @@ func (h *HTTPServer) handleReplayAutoUploadConfigWithToken(w http.ResponseWriter
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
-	me, err := FetchPhiraUserInfo(endpoint, token, runtime.Config.OutboundProxy)
+	me, err := VerifyUserToken(endpoint, token, runtime.Config.OutboundProxy)
 	if err != nil || me == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
 		return

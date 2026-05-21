@@ -154,6 +154,17 @@ func ReadResult[T any](r *BinaryReader, decodeOk func(*BinaryReader) T) StringRe
 	return StringResult[T]{Ok: false, Error: errStr}
 }
 
+// ReadResultErr reads a generic Result<T, E> where the error branch is decoded
+// via decodeErr. The returned ok flag indicates which branch was taken; only
+// one of value/errVal is meaningful per the flag. This mirrors the TS
+// readResult<Ok, Err>(decodeOk, decodeErr) signature in common/binary.ts.
+func ReadResultErr[T any, E any](r *BinaryReader, decodeOk func(*BinaryReader) T, decodeErr func(*BinaryReader) E) (value T, errVal E, ok bool) {
+	if r.ReadBool() {
+		return decodeOk(r), errVal, true
+	}
+	return value, decodeErr(r), false
+}
+
 // ReadArray reads an array of T.
 func ReadArray[T any](r *BinaryReader, decode func(*BinaryReader) T) []T {
 	n := r.ReadUlebNumber()
@@ -327,6 +338,18 @@ func WriteResult[T any](w *BinaryWriter, v StringResult[T], encodeOk func(*Binar
 	} else {
 		w.WriteBool(false)
 		w.WriteString(v.Error)
+	}
+}
+
+// WriteResultErr writes a generic Result<T, E> via the supplied encoders.
+// Mirrors the TS writeResult<Ok, Err>(encodeOk, encodeErr) signature.
+func WriteResultErr[T any, E any](w *BinaryWriter, ok bool, value T, errVal E, encodeOk func(*BinaryWriter, T), encodeErr func(*BinaryWriter, E)) {
+	if ok {
+		w.WriteBool(true)
+		encodeOk(w, value)
+	} else {
+		w.WriteBool(false)
+		encodeErr(w, errVal)
 	}
 }
 

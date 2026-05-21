@@ -12,7 +12,8 @@ import (
 
 const (
 	defaultPhiraAPIEndpoint = "https://phira.5wyxi.com"
-	fetchTimeoutMs          = 60000
+	fetchTimeoutMs          = 15000
+	fetchMaxRetries         = 5
 )
 
 // PhiraUserInfo is the response from /me.
@@ -56,7 +57,7 @@ func FetchPhiraUserInfo(endpoint, token, proxy string) (*PhiraUserInfo, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := utils.NewHTTPClient(proxy, fetchTimeoutMs*time.Millisecond)
-	resp, err := client.Do(req)
+	resp, err := utils.DoWithRetry(client, req, fetchMaxRetries)
 	if err != nil {
 		return nil, fmt.Errorf("auth-fetch-me-failed")
 	}
@@ -109,8 +110,12 @@ func FetchPhiraChart(endpoint string, id int32, proxy string) (*PhiraChart, erro
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/chart/%d", endpoint, id), nil)
+	if err != nil {
+		return nil, err
+	}
 	client := utils.NewHTTPClient(proxy, fetchTimeoutMs*time.Millisecond)
-	resp, err := client.Get(fmt.Sprintf("%s/chart/%d", endpoint, id))
+	resp, err := utils.DoWithRetry(client, req, fetchMaxRetries)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +137,12 @@ func FetchPhiraRecord(endpoint string, id int32, proxy string) (*PhiraRecord, er
 	if endpoint == "" {
 		endpoint = defaultPhiraAPIEndpoint
 	}
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/record/%d", endpoint, id), nil)
+	if err != nil {
+		return nil, err
+	}
 	client := utils.NewHTTPClient(proxy, fetchTimeoutMs*time.Millisecond)
-	resp, err := client.Get(fmt.Sprintf("%s/record/%d", endpoint, id))
+	resp, err := utils.DoWithRetry(client, req, fetchMaxRetries)
 	if err != nil {
 		return nil, err
 	}
@@ -153,4 +162,13 @@ func FetchPhiraRecord(endpoint string, id int32, proxy string) (*PhiraRecord, er
 		return nil, err
 	}
 	return &record, nil
+}
+
+// VerifyUserToken validates a Phira user token by calling /me. It mirrors the
+// TS verifyUserToken helper in tphira-mp-main/src/server/network/httpHelpers.ts
+// and applies the shared retry/backoff policy via DoWithRetry. Returns the
+// resolved user on success or nil with an error when the token is invalid or
+// the upstream is unreachable after retries.
+func VerifyUserToken(endpoint, token, proxy string) (*PhiraUserInfo, error) {
+	return FetchPhiraUserInfo(endpoint, token, proxy)
 }

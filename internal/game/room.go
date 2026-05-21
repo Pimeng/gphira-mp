@@ -647,22 +647,42 @@ func (r *Room) CheckAllReady(callbacks *RoomCallbacks) error {
 			bestScore := math.MinInt
 			bestAcc := float32(math.Inf(-1))
 			bestStd := float32(math.Inf(1))
-			var bestScoreID, bestAccID, bestStdID int32
+			var bestScoreIDs, bestAccIDs, bestStdIDs []int32
 
-			for id, rec := range s.Results {
-				if rec.Score > bestScore {
+			ids := make([]int32, 0, len(s.Results))
+			for id := range s.Results {
+				ids = append(ids, id)
+			}
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+			for _, id := range ids {
+				rec := s.Results[id]
+				switch {
+				case rec.Score > bestScore:
 					bestScore = rec.Score
-					bestScoreID = id
+					bestScoreIDs = append(bestScoreIDs[:0], id)
+				case rec.Score == bestScore:
+					bestScoreIDs = append(bestScoreIDs, id)
 				}
-				if rec.Accuracy > bestAcc {
+				switch {
+				case rec.Accuracy > bestAcc:
 					bestAcc = rec.Accuracy
-					bestAccID = id
+					bestAccIDs = append(bestAccIDs[:0], id)
+				case rec.Accuracy == bestAcc:
+					bestAccIDs = append(bestAccIDs, id)
 				}
-				if rec.Std < bestStd {
+				switch {
+				case rec.Std < bestStd:
 					bestStd = rec.Std
-					bestStdID = id
+					bestStdIDs = append(bestStdIDs[:0], id)
+				case rec.Std == bestStd:
+					bestStdIDs = append(bestStdIDs, id)
 				}
 			}
+
+			bestScoreID := bestScoreIDs[0]
+			bestAccID := bestAccIDs[0]
+			bestStdID := bestStdIDs[0]
 
 			bestScoreName := fmt.Sprintf("%d", bestScoreID)
 			if u := callbacks.UsersById(bestScoreID); u != nil {

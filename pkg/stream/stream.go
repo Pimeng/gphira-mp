@@ -17,6 +17,11 @@ const (
 	maxHandlerWorkers = 64
 )
 
+// DefaultProtocolVersion is the protocol version byte used by New/NewClient
+// when no explicit version is supplied. Mirrors PROTOCOL_VERSION in
+// tphira-mp-main/src/common/stream.ts.
+const DefaultProtocolVersion byte = protocolVersion
+
 // Codec defines encode/decode and priority for a stream.
 type Codec[S, R any] struct {
 	EncodeSend     func(S) []byte
@@ -46,24 +51,32 @@ type Stream[S, R any] struct {
 }
 
 // New creates a new stream after version negotiation (server-side).
+// The expected client version is DefaultProtocolVersion. Use NewWithVersion
+// to override it.
 func New[S, R any](conn net.Conn, codec Codec[S, R], handler func(R) error, fastPath func(R) bool, onError func(string, error)) (*Stream[S, R], error) {
+	return NewWithVersion(conn, DefaultProtocolVersion, codec, handler, fastPath, onError)
+}
+
+// NewWithVersion is like New but lets the caller specify the expected client
+// version byte, matching the TS expectedVersion parameter.
+func NewWithVersion[S, R any](conn net.Conn, expected byte, codec Codec[S, R], handler func(R) error, fastPath func(R) bool, onError func(string, error)) (*Stream[S, R], error) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 	}
 
-	// Version negotiation: server expects version 1
+	// Version negotiation: server expects the supplied version byte.
 	buf := make([]byte, 1)
 	if _, err := conn.Read(buf); err != nil {
 		return nil, err
 	}
-	if buf[0] != protocolVersion {
+	if buf[0] != expected {
 		conn.Close()
 		return nil, protocol.ErrInvalidLength
 	}
 
 	s := &Stream[S, R]{
 		conn:       conn,
-		version:    protocolVersion,
+		version:    expected,
 		codec:      codec,
 		handler:    handler,
 		fastPath:   fastPath,
@@ -75,19 +88,27 @@ func New[S, R any](conn net.Conn, codec Codec[S, R], handler func(R) error, fast
 }
 
 // NewClient creates a client-side stream (sends version byte, no ack expected).
+// The version sent is DefaultProtocolVersion. Use NewClientWithVersion to
+// override it.
 func NewClient[S, R any](conn net.Conn, codec Codec[S, R], handler func(R) error, fastPath func(R) bool, onError func(string, error)) (*Stream[S, R], error) {
+	return NewClientWithVersion(conn, DefaultProtocolVersion, codec, handler, fastPath, onError)
+}
+
+// NewClientWithVersion is like NewClient but lets the caller specify the
+// version byte to send, matching the TS versionToSend parameter.
+func NewClientWithVersion[S, R any](conn net.Conn, send byte, codec Codec[S, R], handler func(R) error, fastPath func(R) bool, onError func(string, error)) (*Stream[S, R], error) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 	}
 
 	// Client sends version first (matching TS behavior: no ack expected)
-	if _, err := conn.Write([]byte{protocolVersion}); err != nil {
+	if _, err := conn.Write([]byte{send}); err != nil {
 		return nil, err
 	}
 
 	s := &Stream[S, R]{
 		conn:       conn,
-		version:    protocolVersion,
+		version:    send,
 		codec:      codec,
 		handler:    handler,
 		fastPath:   fastPath,

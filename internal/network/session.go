@@ -426,11 +426,22 @@ func (s *Session) process(cmd protocol.ClientCommand) (protocol.ServerCommand, e
 			return nil
 		},
 		BroadcastToMonitors: func(room *game.Room, cmd protocol.ServerCommand) {
-			for _, id := range room.MonitorIDs() {
-				if u := s.findUser(id); u != nil {
-					_ = u.TrySend(cmd)
-				}
+			ids := room.MonitorIDs()
+			if len(ids) == 0 {
+				return
 			}
+			go func() {
+				defer func() {
+					if rec := recover(); rec != nil && s.State != nil && s.State.Logger != nil {
+						s.State.Logger.Error("broadcast monitors panic", "err", fmt.Sprintf("%v", rec))
+					}
+				}()
+				for _, id := range ids {
+					if u := s.findUser(id); u != nil {
+						_ = u.TrySend(cmd)
+					}
+				}
+			}()
 		},
 		ProcessCreateRoom: func(id roomid.RoomID) error {
 			var isBanned bool
