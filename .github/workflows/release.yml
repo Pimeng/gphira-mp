@@ -58,7 +58,6 @@ jobs:
             local ext=""
             [ "$os" = "windows" ] && ext=".exe"
             GOOS=$os GOARCH=$arch go build -ldflags="$ldflags" -o "dist/gphira-mp-${os}-${arch}${ext}" ./cmd/server
-            GOOS=$os GOARCH=$arch go build -ldflags="$ldflags" -o "dist/bench-${os}-${arch}${ext}" ./cmd/bench
           }
 
           build_platform linux amd64
