@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -127,7 +128,7 @@ func (c *Client) doConnect() error {
 	if c.opts.Dialer != nil {
 		conn, err = c.opts.Dialer(c.host, c.port)
 	} else {
-		addr := fmt.Sprintf("%s:%d", c.host, c.port)
+		addr := net.JoinHostPort(c.host, strconv.Itoa(c.port))
 		conn, err = net.Dial("tcp", addr)
 	}
 	if err != nil {

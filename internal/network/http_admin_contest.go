@@ -1,3 +1,7 @@
+// /admin/contest/rooms/:id/(config|whitelist|start) — manage contest mode on a
+// single room. Contest rooms always require manual start and auto-disband
+// after the game ends; current participants are auto-added to the whitelist on
+// every update so admins can't accidentally lock active players out.
 package network
 
 import (

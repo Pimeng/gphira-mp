@@ -64,10 +64,10 @@ Global state management including rooms, users, sessions, ban lists, and admin d
 - Heartbeat: 3 s interval, 10 s disconnect timeout
 
 #### HTTP API
-- Public endpoints: `/status`, `/room`, `/room-creation/config`, `/replay/config`, `/chart/:id`, `/ws`
-- Admin endpoints: `/admin/status`, `/admin/broadcast`, `/admin/rooms`, `/admin/users`, `/admin/logs`, `/admin/ban/*`, `/admin/ip-blacklist`, `/admin/rooms/:id/disband`, `/admin/rooms/:id/chat`
-- Replay download: `/replay/download` (admin-only, 50 KB/s rate limit)
-- Admin auth via permanent token or temporary OTP
+- Public endpoints: `/status`, `/room`, `/room-creation/config`, `/replay/config`, `/chart/:id`, `/ws`, `/replay/auth`, `/replay/delete`, `/replay/upload`, `/replay/auto-upload/config`, `/replay/download` (user/admin dual-mode, 50 KB/s rate limit)
+- Admin auth: `/admin/otp/request`, `/admin/otp/verify` (OTP / CLI approval flow)
+- Admin endpoints: `/admin/status`, `/admin/replay/config`, `/admin/room-creation/config`, `/admin/broadcast`, `/admin/rooms`, `/admin/rooms/:id/(disband|chat|max_users)`, `/admin/users`, `/admin/users/:id/(disconnect|move)`, `/admin/sessions`, `/admin/logs`, `/admin/log-rate`, `/admin/ban/(user|room)`, `/admin/ip-blacklist/(remove|clear)`, `/admin/contest/rooms/:id/(config|whitelist|start)`
+- Admin auth via permanent `ADMIN_TOKEN` or temporary token issued through OTP / CLI approval
 
 #### WebSocket
 - Real-time room state updates

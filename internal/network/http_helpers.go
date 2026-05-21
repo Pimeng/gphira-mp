@@ -1,3 +1,7 @@
+// Common HTTP helpers shared across http.go, http_admin*.go, http_replay.go,
+// and http_admin_auth.go. Keeping requireMethod/writeError/decodeJSONBody and
+// the session-TTL constants centralized here is what lets each handler file
+// stay a thin, single-purpose layer.
 package network
 
 import (

@@ -1,3 +1,5 @@
+// /admin/logs and /admin/log-rate — read-only access to per-room recent log
+// buffers and the global log-throughput metric.
 package network
 
 import (

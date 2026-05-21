@@ -1,3 +1,5 @@
+// /admin/ban/(user|room) — manage server-wide and per-room user bans.
+// Mutations are persisted via state.SaveAdminData so bans survive restart.
 package network
 
 import (

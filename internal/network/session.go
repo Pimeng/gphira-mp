@@ -463,13 +463,6 @@ func (s *Session) userID() int32 {
 	return 0
 }
 
-func (s *Session) userName() string {
-	if s.user != nil {
-		return s.user.GetName()
-	}
-	return ""
-}
-
 func (s *Session) markLost() {
 	runtime := s.State.SnapshotRuntime()
 	s.mu.Lock()

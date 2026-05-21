@@ -1,3 +1,7 @@
+// /admin/replay/config and /admin/room-creation/config — runtime toggles for
+// the global replay-recording flag and the room-creation gate. Disabling
+// replay ends recording on every live room and writes the change back to the
+// on-disk config file so it survives restart.
 package network
 
 import (

@@ -1,3 +1,9 @@
+// Per-command helpers extracted from Session.process() to keep that function
+// focused on wiring the CommandContext. Each doXxx method holds the body of
+// what was previously an inline closure inside process(). The runtime snapshot
+// is taken once per process() call and threaded through these methods so that
+// admin config edits cannot make different callbacks observe inconsistent state
+// mid-command.
 package network
 
 import (

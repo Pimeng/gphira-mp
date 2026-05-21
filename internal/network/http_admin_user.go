@@ -1,3 +1,7 @@
+// /admin/users/:id and its sub-paths (disconnect, move) — read or mutate a
+// single user. `move` is the only path that touches game-layer Room state
+// directly from the HTTP layer; it deliberately refuses to move users that are
+// online or in rooms not in select_chart, to avoid mid-game disruption.
 package network
 
 import (

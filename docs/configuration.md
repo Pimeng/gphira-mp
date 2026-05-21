@@ -68,6 +68,7 @@ Every config option has a corresponding environment variable with the same name:
 | `HTTP_SERVICE` | bool | `false` |
 | `HTTP_PORT` | int | `12347` |
 | `ROOM_MAX_USERS` | int | `8` |
+| `ROOM_CREATION_ENABLED` | bool | `true` |
 | `CHAT_ENABLED` | bool | `true` |
 | `REPLAY_ENABLED` | bool | `false` |
 | `REPLAY_BASE_DIR` | string | `./record` |

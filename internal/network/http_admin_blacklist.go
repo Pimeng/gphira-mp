@@ -1,3 +1,6 @@
+// /admin/ip-blacklist (list/remove/clear) — read and mutate the connection-log
+// rate limiter's IP blacklist (utils.Logger). Banned IPs are auto-aged-out by
+// the logger, not by these endpoints.
 package network
 
 import (

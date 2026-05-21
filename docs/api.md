@@ -24,33 +24,45 @@ The token is configured via `ADMIN_TOKEN` in the config file or environment.
 
 ### `GET /status`
 
-Returns basic server status.
+Returns basic server status. Public — no authentication required.
 
 **Response:**
 ```json
 {
-  "ok": true,
   "server_name": "Phira MP",
   "online": 42,
-  "rooms": 5,
-  "sessions": 42,
-  "room_ids": ["room1", "room2"]
+  "rooms": 5
 }
 ```
+
+> The detailed counters (`sessions`, `room_ids`) are only available on `/admin/status`.
 
 ### `GET /room`
 
-Returns the public room list.
+Returns the public room list. Hidden rooms (RoomID starting with `_`) are excluded.
 
 **Response:**
 ```json
 {
-  "ok": true,
+  "total": 12,
   "rooms": [
-    {"id": "room1", "host_id": 1, "users": 3, "monitors": 1, "max": 8}
+    {
+      "roomid": "room1",
+      "cycle": false,
+      "lock": false,
+      "host": {"id": "1", "name": "Alice"},
+      "state": "select_chart",
+      "chart": {"id": "1234", "name": "Chart Name"},
+      "players": [
+        {"id": 1, "name": "Alice"},
+        {"id": 2, "name": "Bob"}
+      ]
+    }
   ]
 }
 ```
+
+> `chart` is omitted when no chart is selected. `total` is the sum of `players.length` across all rooms.
 
 ### `GET /room-creation/config`
 
@@ -67,7 +79,7 @@ Returns replay recording configuration.
 
 **Response:**
 ```json
-{"ok": true, "enabled": false, "auto_upload": false}
+{"ok": true, "enabled": false}
 ```
 
 ### `GET /chart/:id`
@@ -79,11 +91,73 @@ Proxies a chart request to the Phira API with local caching.
 {"ok": true, "id": 123, "name": "Chart Name", "cache": false}
 ```
 
+### `POST /replay/auth`
+
+Exchange a Phira user token for a short-lived replay session token (TTL 30 min).
+
+**Body:**
+```json
+{"token": "<phira-user-token>"}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "userId": 12345,
+  "charts": [...],
+  "sessionToken": "uuid-like-string",
+  "expiresAt": 1700000000000
+}
+```
+
 ### `GET /replay/download`
 
-Downloads a replay file (admin only, rate-limited to 50 KB/s).
+Two modes:
 
-Requires `X-Admin-Token` and query parameter `?file=record/user/chart/timestamp.phirarec`.
+- **User mode** (with `sessionToken` query): requires a valid replay session token from `/replay/auth`.
+  Query: `?sessionToken=<token>&chartId=<id>&timestamp=<ms>`
+- **Admin mode** (no `sessionToken`): falls through to admin path; requires admin token.
+  Query: `?userId=<id>&chartId=<id>&timestamp=<ms>` + admin token (header or `?token=`).
+
+Streamed at ~50 KB/s in 4 KB chunks. Returns the `.phirarec` file as `application/octet-stream`.
+
+### `POST /replay/delete`
+
+Delete one of the user's recorded or uploaded replays. Requires a session token.
+
+**Body:**
+```json
+{"sessionToken": "...", "chartId": 123, "timestamp": 1700000000000}
+```
+
+### `POST /replay/upload`
+
+Upload a replay file to the configured share-station. Requires a Phira user token.
+
+**Body:**
+```json
+{"token": "<phira-user-token>", "chartId": 123, "timestamp": 1700000000000}
+```
+
+### `GET|POST /replay/auto-upload/config`
+
+Get or update the per-user auto-upload visibility flag. GET uses `?token=`, POST uses body `{"token","show"}`.
+
+### `POST /admin/otp/request`
+
+Request a one-time admin OTP (only when `ADMIN_TOKEN` is not set). Returns an `ssid` + OTP printed to stdout.
+
+**Body:** `{"mode": "otp"}` or `{"mode": "cli"}` (CLI mode requires operator approval via the interactive command line).
+
+### `POST /admin/otp/verify`
+
+Verify an OTP and obtain a temporary admin token (TTL 4 hours).
+
+**Body:**
+```json
+{"ssid": "...", "otp": "...", "mode": "otp"}
+```
 
 ---
 
@@ -91,64 +165,54 @@ Requires `X-Admin-Token` and query parameter `?file=record/user/chart/timestamp.
 
 ### `GET /admin/status`
 
-Same as public `/status` but requires admin token.
+Returns server status including session and room id details.
+
+**Response:**
+```json
+{
+  "ok": true,
+  "server_name": "Phira MP",
+  "online": 42,
+  "rooms": 5,
+  "sessions": 42,
+  "room_ids": ["room1", "room2"]
+}
+```
+
+### `GET|POST /admin/replay/config`
+
+Toggle the global replay recording flag. POST body: `{"enabled": true|false}`. Disabling ends recording on all live rooms and writes the change back to the config file.
+
+### `GET|POST /admin/room-creation/config`
+
+Toggle whether clients can create rooms. POST body: `{"enabled": true|false}`.
 
 ### `POST /admin/broadcast`
 
-Broadcasts a system message to all online users.
+Broadcasts a system message (chat) to every room.
 
 **Body:**
 ```json
 {"message": "Hello everyone!"}
 ```
 
+**Constraints:** non-empty, max 200 chars.
+
 ### `GET /admin/rooms`
 
-Lists all rooms with detailed info.
+Lists all rooms with full server-side detail (state machine fields, ready counts, results, monitors, contest config, recent logs). Field shape mirrors the `roomUpdate` WebSocket payload — see `internal/network/admin_views.go` for the authoritative struct.
 
-**Response:**
-```json
-{
-  "ok": true,
-  "rooms": [
-    {
-      "id": "room1",
-      "host_id": 1,
-      "users": [1, 2, 3],
-      "monitors": [4],
-      "state": "select_chart",
-      "locked": false,
-      "cycle": false,
-      "contest": {
-        "whitelist_count": 4,
-        "whitelist": [1, 2, 3, 4],
-        "manual_start": true,
-        "auto_disband": true
-      }
-    }
-  ]
-}
-```
+### `POST /admin/rooms/:id/max_users`
 
-> `contest` is omitted when contest mode is disabled.
+Adjust a room's max capacity at runtime. Body: `{"maxUsers": 1..64}`.
 
 ### `POST /admin/rooms/:id/disband`
 
 Forcibly disbands a room and disconnects all participants.
 
-**Response:**
-```json
-{"ok": true, "roomid": "room1"}
-```
-
 ### `POST /admin/rooms/:id/chat`
 
-Sends a chat message to all participants in a room.
-
-**Body:**
-```json
-{"message": "Admin says hi"}
-```
+Sends a chat message to all participants in a room. Body: `{"message": "..."}`, max 200 chars.
 
 ### `GET /admin/users`
 
@@ -156,46 +220,58 @@ Lists all online users.
 
 ### `GET /admin/users/:id`
 
-Returns details for a specific user.
+Returns details for a specific user (id, name, monitor, connected, room, banned).
 
-### `GET /admin/sessions`
+### `POST /admin/users/:id/disconnect`
 
-Lists all active TCP sessions.
+Force-disconnects a user; cancels their in-progress play if any.
 
-### `GET /admin/logs`
+### `POST /admin/users/:id/move`
 
-Returns recent server logs.
-
-### `POST /admin/ban/user`
-
-Bans a user server-wide.
+Move a user from one room to another. Both rooms must be in `select_chart` state and the user must be offline.
 
 **Body:**
 ```json
-{"user_id": 123}
+{"roomId": "target", "monitor": false}
+```
+
+### `GET /admin/sessions`
+
+Lists all active TCP sessions (id, user_id, user_name, remote_ip).
+
+### `GET /admin/logs`
+
+Returns recent logs for a specific room. Requires `?roomId=<id>` query parameter.
+
+### `GET /admin/log-rate`
+
+Returns the current log-throughput rate (lines/sec).
+
+### `POST /admin/ban/user`
+
+Bans (or unbans) a user server-wide. Field names use camelCase.
+
+**Body:**
+```json
+{"userId": 123, "banned": true, "disconnect": true}
 ```
 
 ### `POST /admin/ban/room`
 
-Bans a user from a specific room.
+Bans (or unbans) a user from a specific room.
 
 **Body:**
 ```json
-{"user_id": 123, "room_id": "room1"}
+{"userId": 123, "roomId": "room1", "banned": true}
 ```
 
 ### `GET /admin/ip-blacklist`
 
-Returns the current IP blacklist.
+Returns the current IP blacklist with expiry times.
 
 ### `POST /admin/ip-blacklist/remove`
 
-Removes an IP from the blacklist.
-
-**Body:**
-```json
-{"ip": "192.168.1.1"}
-```
+Removes an IP from the blacklist. Body: `{"ip": "1.2.3.4"}`.
 
 ### `POST /admin/ip-blacklist/clear`
 

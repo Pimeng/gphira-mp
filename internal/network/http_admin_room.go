@@ -1,3 +1,6 @@
+// /admin/rooms/:id sub-paths (max_users, disband, chat) — runtime operations
+// on a single room. disband force-disconnects every participant and ends
+// replay recording before deleting the room from State.Rooms.
 package network
 
 import (
