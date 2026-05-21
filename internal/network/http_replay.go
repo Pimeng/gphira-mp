@@ -1,8 +1,6 @@
 package network
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,7 +18,6 @@ import (
 )
 
 const (
-	replaySessionTTL          = 30 * time.Minute
 	replayDownloadBytesPerSec = 50 * 1024
 	replayDownloadChunkSize   = 4096
 )
@@ -67,30 +64,15 @@ func (h *HTTPServer) putReplaySession(userID int32) (string, int64) {
 	return token, expiresAt
 }
 
-func newHTTPToken() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return fmt.Sprintf("%s-%s-%s-%s-%s",
-		hex.EncodeToString(b[0:4]),
-		hex.EncodeToString(b[4:6]),
-		hex.EncodeToString(b[6:8]),
-		hex.EncodeToString(b[8:10]),
-		hex.EncodeToString(b[10:16]),
-	)
-}
-
 func (h *HTTPServer) handleReplayAuth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	var req struct {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-token"})
+		writeError(w, http.StatusBadRequest, "bad-token")
 		return
 	}
 
@@ -101,7 +83,7 @@ func (h *HTTPServer) handleReplayAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	me, err := VerifyUserToken(endpoint, strings.TrimSpace(req.Token), runtime.Config.OutboundProxy)
 	if err != nil || me == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
@@ -178,8 +160,7 @@ func (h *HTTPServer) buildReplayCharts(userID int32) []replayChartResponse {
 }
 
 func (h *HTTPServer) handleReplayDownload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	q := r.URL.Query()
@@ -192,12 +173,12 @@ func (h *HTTPServer) handleReplayDownload(w http.ResponseWriter, r *http.Request
 	chartID, err1 := strconv.ParseInt(q.Get("chartId"), 10, 32)
 	timestamp, err2 := strconv.ParseInt(q.Get("timestamp"), 10, 64)
 	if err1 != nil || err2 != nil || chartID < 0 || timestamp <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
 	sess, ok := h.getReplaySession(sessionToken)
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if h.serveReplayFile(w, r, sess.UserID, int32(chartID), timestamp) {
@@ -214,12 +195,12 @@ func (h *HTTPServer) handleReplayDownload(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not-found"})
+	writeError(w, http.StatusNotFound, "not-found")
 }
 
 func (h *HTTPServer) handleAdminReplayDownload(w http.ResponseWriter, r *http.Request) {
 	if !h.adminTokenOK(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	q := r.URL.Query()
@@ -227,11 +208,11 @@ func (h *HTTPServer) handleAdminReplayDownload(w http.ResponseWriter, r *http.Re
 	chartID, err2 := strconv.ParseInt(q.Get("chartId"), 10, 32)
 	timestamp, err3 := strconv.ParseInt(q.Get("timestamp"), 10, 64)
 	if err1 != nil || err2 != nil || err3 != nil || userID < 0 || chartID < 0 || timestamp <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
 	if !h.serveReplayFile(w, r, int32(userID), int32(chartID), timestamp) {
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not-found"})
+		writeError(w, http.StatusNotFound, "not-found")
 	}
 }
 
@@ -301,8 +282,7 @@ func streamReplayThrottled(w http.ResponseWriter, r *http.Request, src io.Reader
 }
 
 func (h *HTTPServer) handleReplayDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	var req struct {
@@ -311,12 +291,12 @@ func (h *HTTPServer) handleReplayDelete(w http.ResponseWriter, r *http.Request) 
 		Timestamp    int64  `json:"timestamp"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.SessionToken) == "" || req.ChartID < 0 || req.Timestamp <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
 	sess, ok := h.getReplaySession(strings.TrimSpace(req.SessionToken))
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	runtime := h.state.SnapshotRuntime()
@@ -331,12 +311,11 @@ func (h *HTTPServer) handleReplayDelete(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not-found"})
+	writeError(w, http.StatusNotFound, "not-found")
 }
 
 func (h *HTTPServer) handleReplayUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	var req struct {
@@ -345,12 +324,12 @@ func (h *HTTPServer) handleReplayUpload(w http.ResponseWriter, r *http.Request) 
 		Timestamp int64  `json:"timestamp"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" || req.ChartID < 0 || req.Timestamp <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
 	runtime := h.state.SnapshotRuntime()
 	if !shareStationConfigured(runtime.Config) {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "share-station-not-configured"})
+		writeError(w, http.StatusServiceUnavailable, "share-station-not-configured")
 		return
 	}
 	endpoint := runtime.Config.PhiraAPIEndpoint
@@ -359,19 +338,19 @@ func (h *HTTPServer) handleReplayUpload(w http.ResponseWriter, r *http.Request) 
 	}
 	me, err := VerifyUserToken(endpoint, strings.TrimSpace(req.Token), runtime.Config.OutboundProxy)
 	if err != nil || me == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
 	path := replay.ReplayFilePath(runtime.Config.ReplayBaseDir, me.ID, req.ChartID, req.Timestamp)
 	header, err := replay.ReadReplayHeader(path)
 	if err != nil || header == nil || header.UserID != me.ID || header.ChartID != req.ChartID {
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not-found"})
+		writeError(w, http.StatusNotFound, "not-found")
 		return
 	}
 	fileData, err := os.ReadFile(path)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "upload-failed"})
+		writeError(w, http.StatusInternalServerError, "upload-failed")
 		return
 	}
 	result, err := utils.UploadToShareStation(fileData, fmt.Sprintf("%d.phirarec", req.Timestamp), header.ChartName, header.UserName, runtime.Config.ShareStation, runtime.Config.OutboundProxy)
@@ -380,7 +359,7 @@ func (h *HTTPServer) handleReplayUpload(w http.ResponseWriter, r *http.Request) 
 		if result != nil && result.Message != "" {
 			msg = result.Message
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": msg})
+		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
 	if result.ScoreID != 0 && h.state.UploadedReplayMeta != nil {
@@ -409,7 +388,7 @@ func (h *HTTPServer) handleReplayAutoUploadConfig(w http.ResponseWriter, r *http
 			Show  *bool  `json:"show"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-token"})
+			writeError(w, http.StatusBadRequest, "bad-token")
 			return
 		}
 		h.handleReplayAutoUploadConfigWithToken(w, strings.TrimSpace(req.Token), req.Show)
@@ -420,7 +399,7 @@ func (h *HTTPServer) handleReplayAutoUploadConfig(w http.ResponseWriter, r *http
 
 func (h *HTTPServer) handleReplayAutoUploadConfigWithToken(w http.ResponseWriter, token string, show *bool) {
 	if token == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-token"})
+		writeError(w, http.StatusBadRequest, "bad-token")
 		return
 	}
 	runtime := h.state.SnapshotRuntime()
@@ -430,7 +409,7 @@ func (h *HTTPServer) handleReplayAutoUploadConfigWithToken(w http.ResponseWriter
 	}
 	me, err := VerifyUserToken(endpoint, token, runtime.Config.OutboundProxy)
 	if err != nil || me == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	if show != nil && h.state.AutoUploadConfigs != nil {

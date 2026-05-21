@@ -15,7 +15,18 @@ const (
 	maxBatchSize      = 20
 	protocolVersion   = 1
 	maxHandlerWorkers = 64
+	readChunkSize     = 4096
 )
+
+// readChunkPool reuses 4 KiB scratch buffers across all stream readLoop
+// iterations. Storing *[]byte avoids the staticcheck SA6002 warning about
+// slice headers escaping when passed by value to sync.Pool.
+var readChunkPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, readChunkSize)
+		return &b
+	},
+}
 
 // DefaultProtocolVersion is the protocol version byte used by New/NewClient
 // when no explicit version is supplied. Mirrors PROTOCOL_VERSION in
@@ -123,13 +134,16 @@ func NewClientWithVersion[S, R any](conn net.Conn, send byte, codec Codec[S, R],
 func (s *Stream[S, R]) readLoop() {
 	var buf []byte
 	for {
-		tmp := make([]byte, 4096)
+		tmpPtr := readChunkPool.Get().(*[]byte)
+		tmp := *tmpPtr
 		n, err := s.conn.Read(tmp)
 		if err != nil {
+			readChunkPool.Put(tmpPtr)
 			s.close()
 			return
 		}
 		buf = append(buf, tmp[:n]...)
+		readChunkPool.Put(tmpPtr)
 
 		for {
 			res := protocol.TryDecodeFrame(buf, protocol.MaxPayloadBytes)

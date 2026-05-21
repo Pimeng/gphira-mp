@@ -92,8 +92,7 @@ func (h *HTTPServer) Close() error {
 }
 
 func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	h.logger.Debug("http request", "path", "/room", "remote", r.RemoteAddr)
@@ -193,8 +192,7 @@ func (h *HTTPServer) handleRoomList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleRoomCreationConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	runtime := h.state.SnapshotRuntime()
@@ -205,8 +203,7 @@ func (h *HTTPServer) handleRoomCreationConfig(w http.ResponseWriter, r *http.Req
 }
 
 func (h *HTTPServer) handleReplayConfig(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	runtime := h.state.SnapshotRuntime()
@@ -217,8 +214,7 @@ func (h *HTTPServer) handleReplayConfig(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	h.logger.Debug("http request", "path", "/status", "remote", r.RemoteAddr)
@@ -260,8 +256,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 	h.logger.Debug("http request", "path", r.URL.Path, "remote", r.RemoteAddr)
@@ -275,7 +270,7 @@ func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, prefix)
 	id, err := strconv.ParseInt(idStr, 10, 32)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-chart-id"})
+		writeError(w, http.StatusBadRequest, "invalid-chart-id")
 		return
 	}
 
@@ -300,7 +295,7 @@ func (h *HTTPServer) handleChartProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	chart, err := FetchPhiraChart(endpoint, int32(id), runtime.Config.OutboundProxy)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "chart-fetch-failed"})
+		writeError(w, http.StatusBadGateway, "chart-fetch-failed")
 		return
 	}
 

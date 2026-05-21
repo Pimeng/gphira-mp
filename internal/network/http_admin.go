@@ -21,7 +21,7 @@ func (h *HTTPServer) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		result := h.checkAdminRequest(r)
 		if !result.OK {
-			writeJSON(w, result.Status, map[string]any{"ok": false, "error": result.Error})
+			writeError(w, result.Status, result.Error)
 			return
 		}
 		next(w, r)
@@ -79,7 +79,7 @@ func (h *HTTPServer) handleAdminRoomCreationConfig(w http.ResponseWriter, r *htt
 	case http.MethodPost:
 		enabled, ok := decodeEnabled(r)
 		if !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-enabled"})
+			writeError(w, http.StatusBadRequest, "bad-enabled")
 			return
 		}
 		h.state.WithLock(func() {
@@ -100,7 +100,7 @@ func (h *HTTPServer) handleAdminReplayConfig(w http.ResponseWriter, r *http.Requ
 	case http.MethodPost:
 		enabled, ok := decodeEnabled(r)
 		if !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-enabled"})
+			writeError(w, http.StatusBadRequest, "bad-enabled")
 			return
 		}
 		var roomsToEnd []roomid.RoomID
@@ -150,8 +150,7 @@ func (h *HTTPServer) persistReplayEnabled(enabled bool) error {
 }
 
 func (h *HTTPServer) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -177,8 +176,7 @@ func (h *HTTPServer) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleAdminBroadcast(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -186,17 +184,17 @@ func (h *HTTPServer) handleAdminBroadcast(w http.ResponseWriter, r *http.Request
 		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+		writeError(w, http.StatusBadRequest, "invalid-json")
 		return
 	}
 
 	msg := strings.TrimSpace(req.Message)
 	if msg == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-message"})
+		writeError(w, http.StatusBadRequest, "bad-message")
 		return
 	}
 	if len(msg) > 200 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "message-too-long"})
+		writeError(w, http.StatusBadRequest, "message-too-long")
 		return
 	}
 
@@ -231,8 +229,7 @@ func (h *HTTPServer) handleAdminBroadcast(w http.ResponseWriter, r *http.Request
 }
 
 func (h *HTTPServer) handleAdminRooms(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -246,8 +243,7 @@ func (h *HTTPServer) handleAdminRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -284,8 +280,7 @@ func (h *HTTPServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleAdminSessions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -320,8 +315,7 @@ func (h *HTTPServer) handleAdminSessions(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *HTTPServer) handleAdminContest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -334,13 +328,13 @@ func (h *HTTPServer) handleAdminContest(w http.ResponseWriter, r *http.Request) 
 	rest := strings.TrimPrefix(r.URL.Path, prefix)
 	parts := strings.SplitN(rest, "/", 3)
 	if len(parts) < 2 {
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "invalid-path"})
+		writeError(w, http.StatusNotFound, "invalid-path")
 		return
 	}
 
 	ridStr, err := roomid.Parse(parts[0])
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-room-id"})
+		writeError(w, http.StatusBadRequest, "invalid-room-id")
 		return
 	}
 
@@ -354,7 +348,7 @@ func (h *HTTPServer) handleAdminContest(w http.ResponseWriter, r *http.Request) 
 	case "start":
 		h.handleAdminContestStart(w, r, ridStr)
 	default:
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "invalid-path"})
+		writeError(w, http.StatusNotFound, "invalid-path")
 	}
 }
 
@@ -364,7 +358,7 @@ func (h *HTTPServer) handleAdminContestConfig(w http.ResponseWriter, r *http.Req
 		Whitelist []int `json:"whitelist"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+		writeError(w, http.StatusBadRequest, "invalid-json")
 		return
 	}
 
@@ -400,7 +394,7 @@ func (h *HTTPServer) handleAdminContestConfig(w http.ResponseWriter, r *http.Req
 	})
 
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+		writeError(w, http.StatusNotFound, "room-not-found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -411,7 +405,7 @@ func (h *HTTPServer) handleAdminContestWhitelist(w http.ResponseWriter, r *http.
 		UserIDs []int `json:"userIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+		writeError(w, http.StatusBadRequest, "invalid-json")
 		return
 	}
 
@@ -436,7 +430,7 @@ func (h *HTTPServer) handleAdminContestWhitelist(w http.ResponseWriter, r *http.
 	})
 
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "contest-room-not-found"})
+		writeError(w, http.StatusNotFound, "contest-room-not-found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -489,7 +483,7 @@ func (h *HTTPServer) handleAdminContestStart(w http.ResponseWriter, r *http.Requ
 		if result.state == "room-not-waiting" || result.state == "no-chart-selected" || result.state == "not-all-ready" {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]any{"ok": false, "error": result.state})
+		writeError(w, status, result.state)
 		return
 	}
 
@@ -536,7 +530,7 @@ func (h *HTTPServer) handleAdminContestStart(w http.ResponseWriter, r *http.Requ
 		}
 	})
 	if err := room.ForceStartPlaying(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -585,20 +579,19 @@ func joinInt32s(ids []int32, sep string) string {
 // ========== Admin Logs ==========
 
 func (h *HTTPServer) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	roomIDStr := r.URL.Query().Get("roomId")
 	if roomIDStr == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "missing-room-id"})
+		writeError(w, http.StatusBadRequest, "missing-room-id")
 		return
 	}
 
 	rid, err := roomid.Parse(roomIDStr)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-room-id"})
+		writeError(w, http.StatusBadRequest, "invalid-room-id")
 		return
 	}
 
@@ -616,8 +609,7 @@ func (h *HTTPServer) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleAdminLogRate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -631,8 +623,7 @@ func (h *HTTPServer) handleAdminLogRate(w http.ResponseWriter, r *http.Request) 
 // ========== Admin Ban ==========
 
 func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -642,7 +633,7 @@ func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) 
 		Disconnect bool  `json:"disconnect"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+		writeError(w, http.StatusBadRequest, "invalid-json")
 		return
 	}
 
@@ -678,8 +669,7 @@ func (h *HTTPServer) handleAdminBanUser(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HTTPServer) handleAdminBanRoom(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -689,13 +679,13 @@ func (h *HTTPServer) handleAdminBanRoom(w http.ResponseWriter, r *http.Request) 
 		Banned bool   `json:"banned"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+		writeError(w, http.StatusBadRequest, "invalid-json")
 		return
 	}
 
 	rid, err := roomid.Parse(req.RoomID)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-room-id"})
+		writeError(w, http.StatusBadRequest, "invalid-room-id")
 		return
 	}
 
@@ -723,8 +713,7 @@ func (h *HTTPServer) handleAdminBanRoom(w http.ResponseWriter, r *http.Request) 
 // ========== Admin IP Blacklist ==========
 
 func (h *HTTPServer) handleAdminIPBlacklist(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -748,8 +737,7 @@ func (h *HTTPServer) handleAdminIPBlacklist(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *HTTPServer) handleAdminIPBlacklistRemove(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -757,7 +745,7 @@ func (h *HTTPServer) handleAdminIPBlacklistRemove(w http.ResponseWriter, r *http
 		IP string `json:"ip"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+		writeError(w, http.StatusBadRequest, "invalid-json")
 		return
 	}
 
@@ -769,8 +757,7 @@ func (h *HTTPServer) handleAdminIPBlacklistRemove(w http.ResponseWriter, r *http
 }
 
 func (h *HTTPServer) handleAdminIPBlacklistClear(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -794,7 +781,7 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 	parts := strings.SplitN(rest, "/", 2)
 	var userID int32
 	if _, err := fmt.Sscanf(parts[0], "%d", &userID); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-user-id"})
+		writeError(w, http.StatusBadRequest, "invalid-user-id")
 		return
 	}
 
@@ -822,7 +809,7 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 			}
 		})
 		if out == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "user-not-found"})
+			writeError(w, http.StatusNotFound, "user-not-found")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": out})
@@ -842,7 +829,7 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 			}
 		})
 		if sess == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "user-not-connected"})
+			writeError(w, http.StatusNotFound, "user-not-connected")
 			return
 		}
 		if user != nil && user.GetRoom() != nil {
@@ -860,12 +847,12 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 			Monitor bool   `json:"monitor"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+			writeError(w, http.StatusBadRequest, "invalid-json")
 			return
 		}
 		targetID, err := roomid.Parse(req.RoomID)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-room-id"})
+			writeError(w, http.StatusBadRequest, "bad-room-id")
 			return
 		}
 
@@ -880,37 +867,37 @@ func (h *HTTPServer) handleAdminUserDetail(w http.ResponseWriter, r *http.Reques
 			to = h.state.Rooms[targetID]
 		})
 		if user == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "user-not-found"})
+			writeError(w, http.StatusNotFound, "user-not-found")
 			return
 		}
 		if user.HasSession() {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user-must-be-disconnected"})
+			writeError(w, http.StatusBadRequest, "user-must-be-disconnected")
 			return
 		}
 		if from == nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "user-not-in-room"})
+			writeError(w, http.StatusBadRequest, "user-not-in-room")
 			return
 		}
 		if from.Snapshot().State.Type != "select_chart" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "cannot-move-while-playing"})
+			writeError(w, http.StatusBadRequest, "cannot-move-while-playing")
 			return
 		}
 		if to == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+			writeError(w, http.StatusNotFound, "room-not-found")
 			return
 		}
 		if to.Snapshot().State.Type != "select_chart" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "target-room-not-idle"})
+			writeError(w, http.StatusBadRequest, "target-room-not-idle")
 			return
 		}
 
 		runtime := h.state.SnapshotRuntime()
 		if err := to.ValidateJoin(user.ID, req.Monitor, runtime.Config.Monitors, nil); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if !to.AddUser(user.ID, req.Monitor) {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "room-full"})
+			writeError(w, http.StatusBadRequest, "room-full")
 			return
 		}
 
@@ -967,7 +954,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 	parts := strings.SplitN(rest, "/", 2)
 	rid, err := roomid.Parse(parts[0])
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-room-id"})
+		writeError(w, http.StatusBadRequest, "invalid-room-id")
 		return
 	}
 
@@ -977,11 +964,11 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			MaxUsers int `json:"maxUsers"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+			writeError(w, http.StatusBadRequest, "invalid-json")
 			return
 		}
 		if req.MaxUsers < 1 || req.MaxUsers > 64 {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-max-users"})
+			writeError(w, http.StatusBadRequest, "bad-max-users")
 			return
 		}
 		var updated bool
@@ -994,7 +981,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			updated = true
 		})
 		if !updated {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+			writeError(w, http.StatusNotFound, "room-not-found")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "roomid": string(rid), "max_users": req.MaxUsers})
@@ -1008,7 +995,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			room = h.state.Rooms[rid]
 		})
 		if room == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+			writeError(w, http.StatusNotFound, "room-not-found")
 			return
 		}
 		runtime := h.state.SnapshotRuntime()
@@ -1047,16 +1034,16 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			Message string `json:"message"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid-json"})
+			writeError(w, http.StatusBadRequest, "invalid-json")
 			return
 		}
 		msg := strings.TrimSpace(req.Message)
 		if msg == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "empty-message"})
+			writeError(w, http.StatusBadRequest, "empty-message")
 			return
 		}
 		if len(msg) > 200 {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "message-too-long"})
+			writeError(w, http.StatusBadRequest, "message-too-long")
 			return
 		}
 
@@ -1065,7 +1052,7 @@ func (h *HTTPServer) handleAdminRoomDetail(w http.ResponseWriter, r *http.Reques
 			room = h.state.Rooms[rid]
 		})
 		if room == nil {
-			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "error": "room-not-found"})
+			writeError(w, http.StatusNotFound, "room-not-found")
 			return
 		}
 

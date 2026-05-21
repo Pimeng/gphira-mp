@@ -187,13 +187,6 @@ func ReadMap[K comparable, V any](r *BinaryReader, decodeK func(*BinaryReader) K
 	return out
 }
 
-// ReadUUID reads a UUID encoded as two uint64 (low, high).
-func (r *BinaryReader) ReadUUID() string {
-	low := r.ReadU64()
-	high := r.ReadU64()
-	return u64PairToUUID(high, low)
-}
-
 // ReadCompactPos reads a compact position (two float16 values).
 func (r *BinaryReader) ReadCompactPos() CompactPos {
 	xBits := r.ReadU16()
@@ -202,11 +195,6 @@ func (r *BinaryReader) ReadCompactPos() CompactPos {
 		X: half.F16BitsToF32(xBits),
 		Y: half.F16BitsToF32(yBits),
 	}
-}
-
-// Offset returns the current read offset.
-func (r *BinaryReader) Offset() int {
-	return r.offset
 }
 
 // ---------------------------------------------------------------------------
@@ -226,11 +214,6 @@ func NewBinaryWriter() *BinaryWriter {
 // Bytes returns the written data.
 func (w *BinaryWriter) Bytes() []byte {
 	return w.buf
-}
-
-// WriteBuffer appends raw bytes.
-func (w *BinaryWriter) WriteBuffer(data []byte) {
-	w.buf = append(w.buf, data...)
 }
 
 // WriteU8 writes an unsigned 8-bit integer.
@@ -370,13 +353,6 @@ func WriteMap[K comparable, V any](w *BinaryWriter, m map[K]V, encodeK func(*Bin
 	}
 }
 
-// WriteUUID writes a UUID as two uint64 (low, high).
-func (w *BinaryWriter) WriteUUID(uuid string) {
-	high, low := uuidToU64Pair(uuid)
-	w.WriteU64(low)
-	w.WriteU64(high)
-}
-
 // WriteCompactPos writes a compact position (two float16 values).
 func (w *BinaryWriter) WriteCompactPos(pos CompactPos) {
 	w.WriteU16(half.F32ToF16Bits(pos.X))
@@ -402,83 +378,4 @@ func Ok[T any](value T) StringResult[T] {
 // Err creates an error result.
 func Err[T any](err string) StringResult[T] {
 	return StringResult[T]{Ok: false, Error: err}
-}
-
-// ---------------------------------------------------------------------------
-// UUID helpers
-// ---------------------------------------------------------------------------
-
-func uuidToU64Pair(uuid string) (high, low uint64) {
-	// Parse standard UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	// Strict validation matching TypeScript uuid package behavior.
-	if len(uuid) != 36 {
-		panic(ErrUnexpectedEOF)
-	}
-	var b [16]byte
-	j := 0
-	for i := 0; i < len(uuid); i++ {
-		c := uuid[i]
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				panic(ErrUnexpectedEOF)
-			}
-			continue
-		}
-		var nibble byte
-		if c >= '0' && c <= '9' {
-			nibble = c - '0'
-		} else if c >= 'a' && c <= 'f' {
-			nibble = c - 'a' + 10
-		} else if c >= 'A' && c <= 'F' {
-			nibble = c - 'A' + 10
-		} else {
-			panic(ErrUnexpectedEOF)
-		}
-		if j%2 == 0 {
-			b[j/2] = nibble << 4
-		} else {
-			b[j/2] |= nibble
-		}
-		j++
-	}
-	if j != 32 {
-		panic(ErrUnexpectedEOF)
-	}
-	// high = first 8 bytes, low = last 8 bytes (big endian within each half)
-	for i := 0; i < 8; i++ {
-		high = (high << 8) | uint64(b[i])
-	}
-	for i := 8; i < 16; i++ {
-		low = (low << 8) | uint64(b[i])
-	}
-	return
-}
-
-func u64PairToUUID(high, low uint64) string {
-	var b [16]byte
-	for i := 7; i >= 0; i-- {
-		b[i] = byte(high & 0xff)
-		high >>= 8
-	}
-	for i := 15; i >= 8; i-- {
-		b[i] = byte(low & 0xff)
-		low >>= 8
-	}
-	// Format as xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	const hex = "0123456789abcdef"
-	var out [36]byte
-	out[8] = '-'
-	out[13] = '-'
-	out[18] = '-'
-	out[23] = '-'
-	idx := 0
-	for i := 0; i < 16; i++ {
-		if i == 4 || i == 6 || i == 8 || i == 10 {
-			idx++ // skip dash
-		}
-		out[idx] = hex[b[i]>>4]
-		out[idx+1] = hex[b[i]&0x0f]
-		idx += 2
-	}
-	return string(out[:])
 }

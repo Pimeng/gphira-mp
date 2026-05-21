@@ -15,8 +15,6 @@ import (
 const (
 	adminMaxFailedAttemptsPerIP = 5
 	otpMaxAttempts              = 3
-	otpTTL                      = time.Minute
-	tempAdminTokenTTL           = 4 * time.Hour
 )
 
 type otpSession struct {
@@ -210,12 +208,11 @@ func normalizeClientIP(ip string) string {
 }
 
 func (h *HTTPServer) handleAdminOTPRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	if strings.TrimSpace(h.state.SnapshotRuntime().Config.AdminToken) != "" {
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "otp-disabled-when-token-configured"})
+		writeError(w, http.StatusForbidden, "otp-disabled-when-token-configured")
 		return
 	}
 
@@ -261,12 +258,11 @@ func (h *HTTPServer) handleAdminOTPRequest(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *HTTPServer) handleAdminOTPVerify(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	if strings.TrimSpace(h.state.SnapshotRuntime().Config.AdminToken) != "" {
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "otp-disabled-when-token-configured"})
+		writeError(w, http.StatusForbidden, "otp-disabled-when-token-configured")
 		return
 	}
 
@@ -275,13 +271,12 @@ func (h *HTTPServer) handleAdminOTPVerify(w http.ResponseWriter, r *http.Request
 		OTP  string `json:"otp"`
 		Mode string `json:"mode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	ssid := strings.TrimSpace(req.SSID)
 	if ssid == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
 	mode := "otp"
@@ -299,7 +294,7 @@ func (h *HTTPServer) handleAdminOTPVerify(w http.ResponseWriter, r *http.Request
 
 	otp := strings.TrimSpace(req.OTP)
 	if otp == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad-request"})
+		writeError(w, http.StatusBadRequest, "bad-request")
 		return
 	}
 
@@ -307,18 +302,18 @@ func (h *HTTPServer) handleAdminOTPVerify(w http.ResponseWriter, r *http.Request
 	h.ensureOTPStateLocked()
 	if _, banned := h.otpBannedIPs[clientIP]; banned {
 		h.otpMu.Unlock()
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "ip-banned-too-many-attempts"})
+		writeError(w, http.StatusForbidden, "ip-banned-too-many-attempts")
 		return
 	}
 	if _, banned := h.otpBannedSSIDs[ssid]; banned {
 		h.otpMu.Unlock()
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "ssid-banned-too-many-attempts"})
+		writeError(w, http.StatusForbidden, "ssid-banned-too-many-attempts")
 		return
 	}
 	sess, ok := h.otpSessions[ssid]
 	if !ok || now > sess.ExpiresAt {
 		h.otpMu.Unlock()
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid-or-expired-otp"})
+		writeError(w, http.StatusUnauthorized, "invalid-or-expired-otp")
 		return
 	}
 	if sess.OTP != otp {
@@ -336,7 +331,7 @@ func (h *HTTPServer) handleAdminOTPVerify(w http.ResponseWriter, r *http.Request
 			h.printOTPLog("WARN", fmt.Sprintf("[OTP] session %s banned after %d failed attempts", ssid, ssidAttempts))
 		}
 		h.otpMu.Unlock()
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid-or-expired-otp"})
+		writeError(w, http.StatusUnauthorized, "invalid-or-expired-otp")
 		return
 	}
 	delete(h.otpAttemptsByIP, clientIP)
@@ -364,11 +359,11 @@ func (h *HTTPServer) verifyAdminCLISession(w http.ResponseWriter, ssid, clientIP
 		}
 	})
 	if missing || session == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid-or-expired-session"})
+		writeError(w, http.StatusUnauthorized, "invalid-or-expired-session")
 		return
 	}
 	if session.IP != clientIP {
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "ip-mismatch"})
+		writeError(w, http.StatusForbidden, "ip-mismatch")
 		return
 	}
 	switch session.Status {
@@ -384,7 +379,7 @@ func (h *HTTPServer) verifyAdminCLISession(w http.ResponseWriter, ssid, clientIP
 			h.state.WithLock(func() {
 				delete(h.state.CLIApprovalSessions, ssid)
 			})
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "token-not-issued"})
+			writeError(w, http.StatusInternalServerError, "token-not-issued")
 			return
 		}
 		h.state.WithLock(func() {
@@ -398,7 +393,7 @@ func (h *HTTPServer) verifyAdminCLISession(w http.ResponseWriter, ssid, clientIP
 			"mode":      "cli",
 		})
 	default:
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "invalid-approval-status"})
+		writeError(w, http.StatusInternalServerError, "invalid-approval-status")
 	}
 }
 
