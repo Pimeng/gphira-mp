@@ -78,10 +78,15 @@ jobs:
 
           build_platform linux amd64
           build_platform linux arm64
+          build_platform linux 386
+          build_platform linux arm
+          build_platform linux riscv64
           build_platform windows amd64
+          build_platform windows arm64
           build_platform darwin amd64
           build_platform darwin arm64
           build_platform freebsd amd64
+          build_platform freebsd arm64
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
