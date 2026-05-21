@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.26-alpine AS builder
+# Build stage - 使用构建平台原生架构，通过 Go 交叉编译避免 QEMU 模拟
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 WORKDIR /build
 
@@ -10,7 +10,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o gphira-mp ./cmd/server
+ARG TARGETOS TARGETARCH
+ARG PHIRA_MP_VERSION
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w -X github.com/Pimeng/gphira-mp-next/internal/version.version=${PHIRA_MP_VERSION}" -o gphira-mp ./cmd/server
 
 # Runtime stage
 FROM alpine:3.20

@@ -38,30 +38,7 @@ jobs:
 
   build:
     needs: [test]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: linux
-            arch: amd64
-            runner: ubuntu-latest
-          - os: linux
-            arch: arm64
-            runner: ubuntu-latest
-          - os: windows
-            arch: amd64
-            runner: windows-latest
-          - os: darwin
-            arch: amd64
-            runner: macos-latest
-          - os: darwin
-            arch: arm64
-            runner: macos-latest
-          - os: freebsd
-            arch: amd64
-            runner: ubuntu-latest
-
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: 检出代码
@@ -75,10 +52,8 @@ jobs:
       - name: 下载依赖
         run: go mod download
 
-      - name: 构建二进制文件
+      - name: 构建所有平台
         env:
-          GOOS: ${{ matrix.os }}
-          GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         shell: bash
         run: |
@@ -91,41 +66,28 @@ jobs:
           fi
           ldflags="-s -w -X github.com/Pimeng/gphira-mp-next/internal/version.version=${VERSION}"
 
-          ext=""
-          if [ "${GOOS}" = "windows" ]; then
-            ext=".exe"
-          fi
+          mkdir -p dist
 
-          mkdir -p build/dist
-          go build -ldflags="${ldflags}" -o "build/dist/gphira-mp${ext}" ./cmd/server
-          go build -ldflags="${ldflags}" -o "build/dist/bench${ext}" ./cmd/bench
+          build_platform() {
+            local os=$1 arch=$2
+            local ext=""
+            [ "$os" = "windows" ] && ext=".exe"
+            GOOS=$os GOARCH=$arch go build -ldflags="$ldflags" -o "dist/gphira-mp-${os}-${arch}${ext}" ./cmd/server
+            GOOS=$os GOARCH=$arch go build -ldflags="$ldflags" -o "dist/bench-${os}-${arch}${ext}" ./cmd/bench
+          }
 
-      - name: 复制附加文件
-        shell: bash
-        run: |
-          cp -r locales build/dist/locales || true
-          cp docker/entrypoint.sh build/dist/ || true
-          cp docker/Dockerfile build/dist/ || true
-          cp docker-compose.yml build/dist/ || true
-
-      - name: 制作压缩包（Unix）
-        if: matrix.os != 'windows'
-        shell: bash
-        run: |
-          cd build/dist
-          zip -r "../../gphira-mp-${{ matrix.os }}-${{ matrix.arch }}.zip" .
-
-      - name: 制作压缩包（Windows）
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path build\dist\* -DestinationPath "gphira-mp-${{ matrix.os }}-${{ matrix.arch }}.zip"
+          build_platform linux amd64
+          build_platform linux arm64
+          build_platform windows amd64
+          build_platform darwin amd64
+          build_platform darwin arm64
+          build_platform freebsd amd64
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: gphira-mp-${{ matrix.os }}-${{ matrix.arch }}
-          path: gphira-mp-${{ matrix.os }}-${{ matrix.arch }}.zip
+          name: binaries
+          path: dist/*
 
   release:
     needs: [test, build]
@@ -139,8 +101,8 @@ jobs:
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
+          name: binaries
           path: artifacts
-          pattern: gphira-mp-*
 
       - name: 确定版本号
         id: version
@@ -154,12 +116,17 @@ jobs:
             echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 准备配置文件
+        run: cp server_config.example.yml server_config.yml
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
-          files: artifacts/**/*.zip
+          files: |
+            artifacts/**/*
+            server_config.yml
           prerelease: ${{ inputs.prerelease }}
           make_latest: ${{ !inputs.prerelease }}
         env:

@@ -12,7 +12,7 @@ Phira MP 服务器的 **Go 重写版**，提供更小的部署体积、更高的
 - **协议**: 自定义二进制协议（LEB128 帧头，最大 2MiB 负载）
 - **网络**: TCP 游戏服 + HTTP API + WebSocket 推送
 - **缓存**: 内存 LRU + 可选 Redis 后端
-- **构建**: Makefile / make.bat 统一构建，自动嵌入版本号，静态编译无运行时依赖
+- **构建**: Makefile / make.ps1 统一构建，自动嵌入版本号，静态编译无运行时依赖
 
 ---
 
@@ -57,9 +57,9 @@ make bench         # 编译压测工具
 make build         # 同时编译 server + bench
 
 # Windows
-make.bat server
-make.bat bench
-make.bat build
+make.ps1 server
+make.ps1 bench
+make.ps1 build
 ```
 
 编译产物输出到 `build/bin/` 目录。
@@ -71,7 +71,7 @@ make.bat build
 make run           # 编译并运行（使用 server_config.example.yml）
 
 # Windows
-make.bat run
+make.ps1 run
 
 # 或直接运行已编译的二进制
 ./build/bin/gphira-mp
@@ -172,7 +172,7 @@ docker run -d \
 make test
 
 # Windows
-make.bat test
+make.ps1 test
 
 # 或直接使用 Go
 go test ./...
