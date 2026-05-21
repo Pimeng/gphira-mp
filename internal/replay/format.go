@@ -31,6 +31,10 @@ func buildRecordHeader(compression byte) []byte {
 }
 
 // encodeRecordContent encodes the inner record payload.
+//
+// 与 tphira-mp-main/src/server/replay/replayRecorder.ts 的 buildRecordContent 保持
+// 字节级一致：数组长度用 LEB128，TouchPoint 位置用 CompactPos (half-precision)，
+// JudgeEvent 的 line_id/note_id 用 I32（PHIRA record 历史格式，与通信协议的 U32 不同）。
 func encodeRecordContent(recordID int32, timestamp int64, chartID int32, chartName string, userID int32, userName string, frames []protocol.TouchFrame, judges []protocol.JudgeEvent) []byte {
 	w := protocol.NewBinaryWriter()
 
@@ -41,26 +45,14 @@ func encodeRecordContent(recordID int32, timestamp int64, chartID int32, chartNa
 	w.WriteI32(userID)
 	w.WriteString(userName)
 
-	// Touch frames
-	w.WriteU32(uint32(len(frames)))
-	for _, f := range frames {
-		w.WriteF32(f.Time)
-		w.WriteU32(uint32(len(f.Points)))
-		for _, p := range f.Points {
-			w.WriteI8(p.ID)
-			w.WriteF32(p.Pos.X)
-			w.WriteF32(p.Pos.Y)
-		}
-	}
+	protocol.WriteArray(w, frames, protocol.EncodeTouchFrame)
 
-	// Judge events (use I32 for line_id/note_id in replay format)
-	w.WriteU32(uint32(len(judges)))
-	for _, j := range judges {
-		w.WriteF32(j.Time)
-		w.WriteI32(int32(j.LineID))
-		w.WriteI32(int32(j.NoteID))
-		w.WriteU8(uint8(j.Judgement))
-	}
+	protocol.WriteArray(w, judges, func(ww *protocol.BinaryWriter, j protocol.JudgeEvent) {
+		ww.WriteF32(j.Time)
+		ww.WriteI32(int32(j.LineID))
+		ww.WriteI32(int32(j.NoteID))
+		ww.WriteU8(uint8(j.Judgement))
+	})
 
 	return w.Bytes()
 }

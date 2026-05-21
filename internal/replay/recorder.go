@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -70,7 +71,7 @@ func (r *Recorder) SetBaseDir(dir string) {
 
 func (r *Recorder) logf(format string, args ...any) {
 	if r.logger != nil {
-		r.logger.Debug(format, args...)
+		r.logger.Debug(fmt.Sprintf(format, args...))
 	}
 }
 
@@ -188,6 +189,7 @@ func (r *Recorder) AppendTouches(roomID roomid.RoomID, userID int32, frames []pr
 	key := string(roomID) + ":" + itoa(int(userID))
 	it := r.inflightByKey[key]
 	if it == nil || it.Closed {
+		r.logf("AppendTouches dropped: no inflight entry for key=%s (closed=%v)", key, it != nil && it.Closed)
 		return
 	}
 	it.TouchFrames = append(it.TouchFrames, frames...)
@@ -201,6 +203,7 @@ func (r *Recorder) AppendJudges(roomID roomid.RoomID, userID int32, judges []pro
 	key := string(roomID) + ":" + itoa(int(userID))
 	it := r.inflightByKey[key]
 	if it == nil || it.Closed {
+		r.logf("AppendJudges dropped: no inflight entry for key=%s (closed=%v)", key, it != nil && it.Closed)
 		return
 	}
 	it.JudgeEvents = append(it.JudgeEvents, judges...)
@@ -253,6 +256,9 @@ func (r *Recorder) writeFile(it *InFlight) error {
 		it.TouchFrames,
 		it.JudgeEvents,
 	)
+
+	r.logf("writeFile user=%d room=%s recordID=%d touches=%d judges=%d content=%d bytes",
+		it.UserID, it.RoomKey, it.RecordID, len(it.TouchFrames), len(it.JudgeEvents), len(content))
 
 	payload, err := compressPayload(content, compressionZstd)
 	if err != nil {

@@ -338,6 +338,10 @@ func clampRoomMaxUsers(v int) int {
 func (s *Session) sendFakeMonitorJoin(targetUser *game.User, room *game.Room) {
 	runtime := s.State.SnapshotRuntime()
 	if !runtime.ReplayEnabled || !room.ReplayEligible || s.State.ReplayRecorder == nil {
+		if s.State.Logger != nil {
+			s.State.Logger.Debug(fmt.Sprintf("sendFakeMonitorJoin skipped: replayEnabled=%v replayEligible=%v recorder=%v",
+				runtime.ReplayEnabled, room.ReplayEligible, s.State.ReplayRecorder != nil))
+		}
 		return
 	}
 	fake := protocol.UserInfo{
@@ -346,8 +350,13 @@ func (s *Session) sendFakeMonitorJoin(targetUser *game.User, room *game.Room) {
 		Monitor: true,
 	}
 	go func() {
-		time.Sleep(2 * time.Millisecond)
+		// 用户反馈：2ms 太短，客户端可能尚未完成 room 状态初始化；改为 10ms
+		// 并在客户端 room 视图中模拟一个 monitor 加入，使 Phira 客户端开始上报 touches/judges
+		time.Sleep(10 * time.Millisecond)
 		if targetUser.GetRoom() != room {
+			if s.State.Logger != nil {
+				s.State.Logger.Debug(fmt.Sprintf("sendFakeMonitorJoin aborted: user %d no longer in room %s", targetUser.ID, room.ID))
+			}
 			return
 		}
 		_ = targetUser.TrySend(protocol.ServerCommand{Type: protocol.ServerCmdOnJoinRoom, UserInfo: fake})
@@ -355,6 +364,9 @@ func (s *Session) sendFakeMonitorJoin(targetUser *game.User, room *game.Room) {
 			Type:    protocol.ServerCmdMessage,
 			Message: protocol.Message{Type: protocol.MessageJoinRoom, User: fake.ID, Name: fake.Name},
 		})
+		if s.State.Logger != nil {
+			s.State.Logger.Debug(fmt.Sprintf("sendFakeMonitorJoin sent to user %d room %s", targetUser.ID, room.ID))
+		}
 	}()
 }
 
