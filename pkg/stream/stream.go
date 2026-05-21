@@ -245,7 +245,11 @@ func (s *Stream[S, R]) flushSendBatch() {
 	s.sending = true
 	s.sendMu.Unlock()
 
-	var combined []byte
+	total := 0
+	for _, f := range batch {
+		total += len(f)
+	}
+	combined := make([]byte, 0, total)
 	for _, f := range batch {
 		combined = append(combined, f...)
 	}

@@ -237,16 +237,12 @@ func (w *BinaryWriter) WriteBool(v bool) {
 
 // WriteU16 writes an unsigned 16-bit integer (little endian).
 func (w *BinaryWriter) WriteU16(v uint16) {
-	b := make([]byte, 2)
-	binary.LittleEndian.PutUint16(b, v)
-	w.buf = append(w.buf, b...)
+	w.buf = binary.LittleEndian.AppendUint16(w.buf, v)
 }
 
 // WriteU32 writes an unsigned 32-bit integer (little endian).
 func (w *BinaryWriter) WriteU32(v uint32) {
-	b := make([]byte, 4)
-	binary.LittleEndian.PutUint32(b, v)
-	w.buf = append(w.buf, b...)
+	w.buf = binary.LittleEndian.AppendUint32(w.buf, v)
 }
 
 // WriteI32 writes a signed 32-bit integer (little endian).
@@ -256,9 +252,7 @@ func (w *BinaryWriter) WriteI32(v int32) {
 
 // WriteU64 writes an unsigned 64-bit integer (little endian).
 func (w *BinaryWriter) WriteU64(v uint64) {
-	b := make([]byte, 8)
-	binary.LittleEndian.PutUint64(b, v)
-	w.buf = append(w.buf, b...)
+	w.buf = binary.LittleEndian.AppendUint64(w.buf, v)
 }
 
 // WriteI64 writes a signed 64-bit integer (little endian).
@@ -288,19 +282,17 @@ func (w *BinaryWriter) WriteUleb(v uint64) {
 
 // WriteString writes a UTF-8 string (LEB128 length prefix).
 func (w *BinaryWriter) WriteString(s string) {
-	b := []byte(s)
-	w.WriteUleb(uint64(len(b)))
-	w.buf = append(w.buf, b...)
+	w.WriteUleb(uint64(len(s)))
+	w.buf = append(w.buf, s...)
 }
 
 // WriteVarchar writes a UTF-8 string with max length check.
 func (w *BinaryWriter) WriteVarchar(maxLen int, s string) {
-	b := []byte(s)
-	if len(b) > maxLen {
+	if len(s) > maxLen {
 		panic(ErrStringTooLong)
 	}
-	w.WriteUleb(uint64(len(b)))
-	w.buf = append(w.buf, b...)
+	w.WriteUleb(uint64(len(s)))
+	w.buf = append(w.buf, s...)
 }
 
 // WriteOption writes an optional value.
